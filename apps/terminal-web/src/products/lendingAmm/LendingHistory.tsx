@@ -13,6 +13,7 @@ import { PanelFrame, useLoad } from "@/components/Panel";
 import { formatDate, formatTokenAmount } from "@/format";
 import styles from "./LendingAmm.module.css";
 import { Amount } from "./LendingPanel";
+import { useMarketChanges } from "./usePanel";
 
 const LP_DECIMALS = 9;
 const shares = (raw: string) => {
@@ -90,11 +91,13 @@ export function EventSentence({ market, lentMint, event }: { market: Market; len
 
 /** The history panel, a page at a time, newest first. */
 export function LendingHistory({ market, lentMint }: { market: Market; lentMint: string }) {
-  const load = useCallback((signal: AbortSignal) => getFromApi(`/v1/markets/${market.address}/lending-amm/history`, History, { signal }), [market.address]);
+  // Read again whenever an action on the market confirms, which the indexer stores at once.
+  const changes = useMarketChanges(market.address);
+  const load = useCallback((signal: AbortSignal) => (void changes, getFromApi(`/v1/markets/${market.address}/lending-amm/history`, History, { signal })), [market.address, changes]);
   const { state, retry } = useLoad(load);
   return (
     <PanelFrame title="Lending AMM history" what="this market's history" state={state} retry={retry}>
-      {(first) => <HistoryList market={market} lentMint={lentMint} first={first} />}
+      {(first) => <HistoryList key={changes} market={market} lentMint={lentMint} first={first} />}
     </PanelFrame>
   );
 }
@@ -115,12 +118,12 @@ export function HistoryList({ market, lentMint, first }: { market: Market; lentM
       setMore("failed");
     }
   };
-  if (!events.length) return <p className={styles.quiet}>Nothing yet: Aviary has seen none of the strategy&apos;s events on this market.</p>;
   return (
     <div className={styles.history}>
+      {!events.length && <p className={styles.quiet}>{next ? "None of the newest events stored can be read here; older ones may be." : "Nothing yet: Aviary has seen none of the strategy's events on this market."}</p>}
       <ol className={styles.events}>
         {events.map((event) => (
-          <li key={`${event.signature}:${event.slot}:${event.kind}`} className={styles.event}>
+          <li key={`${event.signature}:${event.position}`} className={styles.event}>
             <span className={styles.when}>{event.block_time ? formatDate(new Date(event.block_time)) : `Slot ${event.slot}`}</span>
             <span className={styles.detail}>
               <span>

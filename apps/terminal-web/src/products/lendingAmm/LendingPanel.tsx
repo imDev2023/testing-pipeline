@@ -180,7 +180,7 @@ export function LendingAmmBody({ market, panel, onRefresh }: { market: Market; p
                   ),
               },
               { name: "Locked shares", value: <>{lpShares(BigInt(panel.lp.locked), panel.lp.decimals)} in the lock account<span className={facts.sub}>Besides the {formatInteger(BigInt(panel.lp.minimum_liquidity))} base units the first deposit locked, which nobody can ever withdraw.</span></> },
-              { name: "Lending yield so far", value: panel.yield_so_far === null ? "Not known" : <>{panel.yield_so_far.startsWith("-") ? "-" : ""}<Amount raw={panel.yield_so_far.replace(/^-/, "")} mint={lent} /><span className={facts.sub}>The cTokens&apos; value plus what the market redeemed, less what it deposited; Kamino&apos;s rounding can leave it a few base units below zero.</span></> },
+              { name: "Lending yield so far", value: panel.yield_so_far === null ? "Not known" : <>{panel.yield_so_far.startsWith("-") ? "-" : ""}<Amount raw={panel.yield_so_far.replace(/^-/, "")} mint={lent} /><span className={facts.sub}>The cTokens&apos; value plus what the market redeemed, less what it deposited{panel.yield_so_far.startsWith("-") ? "; Kamino's rounding can leave it a few base units below zero" : ""}.</span></> },
             ]}
           />
         </FactPart>
@@ -274,6 +274,6 @@ export function noticesOf(panel: Panel): string[] {
   if (k.lending_market_emergency) out.push("Kamino's lending market emergency mode is on: Kamino redeems nothing and refreshes no reserve, so sells are paid from the buffer alone until the reserve is an hour stale, adding works only while the market holds no cTokens, and LPs can remove only in kind.");
   if (k.deprecated) out.push("Kamino's reserve is deprecated after a total write-off: its cTokens redeem nothing, ever again.");
   if (panel.withdraw_mode) out.push("The market is in withdraw mode: Kamino's free liquidity fell below five times the market's exposure, so the market lends nothing and redeems what it can.");
-  if (panel.sells.refused === "reserve-stale") out.push("Kamino's reserve has not been refreshed within the last 9,000 slots, so quotes and swaps are refused until someone refreshes it.");
+  if (panel.sells.refused === "reserve-stale") out.push(`Kamino's reserve has not been refreshed within the last ${formatInteger(k.trade_max_age_slots)} slots, so quotes and swaps are refused until someone refreshes it.`);
   return out;
 }

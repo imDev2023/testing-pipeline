@@ -24,6 +24,10 @@ export const LendingKamino = z.object({
   refresh_age_slots: z.number().nullable(),
   withdrawal_cap_remaining: amount.nullable(),
   can_pay: amount,
+  /** The program's TRADE_MAX_RESERVE_AGE_SLOTS: quotes and swaps of a market holding cTokens refuse a reserve refreshed longer ago. */
+  trade_max_age_slots: z.number(),
+  /** The keeper runner's refresh threshold, half of that, past which Aviary offers the refresh. */
+  refresh_after_slots: z.number(),
 });
 
 export const LendingSells = z.object({
@@ -114,6 +118,8 @@ export type LendingPanel = z.infer<typeof LendingPanel>;
 /** One of the strategy's events on a market (docs/spec/lending-pool.md, "Custom actions and metadata"). */
 export const LendingEvent = z.object({
   signature: z.string(),
+  /** Its place among the transaction's strategy events. */
+  position: z.number(),
   slot: z.number(),
   block_time: z.string().nullable(),
   kind: z.enum(["market-created", "market-seeded", "liquidity-added", "liquidity-removed", "lent-side-removed", "shares-locked", "rebalanced", "withdraw-mode-entered", "withdraw-mode-left", "shortfall-redeemed"]),

@@ -98,21 +98,28 @@ export function decodeLendingEvent(data: Uint8Array, marketState: Address): Deco
   }
 }
 
-/** The market's events, newest first, `limit` a page, from before the cursor `slot:block index:position`. */
+/** The market's events, newest first, `limit` a page, from before the cursor `slot:block index:position:signature`, a total order. */
 export async function readLendingHistory(db: Db, { market, marketState, before, limit }: { market: string; marketState: string; before: string | null; limit: number }): Promise<LendingHistory> {
-  const order = sql`(${strategyEvents.slot}, coalesce(${strategyEvents.blockIndex}, 0), ${strategyEvents.position})`;
-  const cursor = before ? before.split(":").map((part) => BigInt(part)) : null;
+  const blockIndex = sql`coalesce(${strategyEvents.blockIndex}, 0)`;
+  const order = sql`(${strategyEvents.slot}, ${blockIndex}, ${strategyEvents.position}, ${strategyEvents.signature})`;
+  const cursor = before ? before.split(":") : null;
   const rows = await db
     .select()
     .from(strategyEvents)
-    .where(and(eq(strategyEvents.program, LENDING_AMM_PROGRAM), eq(strategyEvents.subject, marketState), cursor ? sql`${order} < (${cursor[0]}, ${cursor[1]}, ${cursor[2]})` : undefined))
-    .orderBy(desc(strategyEvents.slot), desc(sql`coalesce(${strategyEvents.blockIndex}, 0)`), desc(strategyEvents.position))
+    .where(
+      and(
+        eq(strategyEvents.program, LENDING_AMM_PROGRAM),
+        eq(strategyEvents.subject, marketState),
+        cursor ? sql`${order} < (${BigInt(cursor[0]!)}, ${Number(cursor[1])}, ${Number(cursor[2])}, ${cursor[3]!})` : undefined,
+      ),
+    )
+    .orderBy(desc(strategyEvents.slot), desc(blockIndex), desc(strategyEvents.position), desc(strategyEvents.signature))
     .limit(limit + 1);
   const page = rows.slice(0, limit);
   const events: LendingEvent[] = page.flatMap((row) => {
     const decoded = decodeLendingEvent(new Uint8Array(Buffer.from(row.data, "base64")), marketState as Address);
-    return decoded ? [{ signature: row.signature, slot: Number(row.slot), block_time: row.blockTime ? row.blockTime.toISOString() : null, ...decoded }] : [];
+    return decoded ? [{ signature: row.signature, position: row.position, slot: Number(row.slot), block_time: row.blockTime ? row.blockTime.toISOString() : null, ...decoded }] : [];
   });
   const last = page.at(-1);
-  return { market, events, next_before: rows.length > limit && last ? `${last.slot}:${last.blockIndex ?? 0}:${last.position}` : null };
+  return { market, events, next_before: rows.length > limit && last ? `${last.slot}:${last.blockIndex ?? 0}:${last.position}:${last.signature}` : null };
 }

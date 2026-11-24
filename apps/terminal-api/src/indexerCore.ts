@@ -46,9 +46,19 @@ import {
   type RawTransaction,
   type TransactionHandler,
 } from "terminal-indexer";
-import { indexedTransactions, markets, metadataSnapshots, programFacts, programVersions, strategies, trades } from "terminal-db";
-import { and, eq, inArray, isNull, max, notExists, sql } from "drizzle-orm";
-import { CANDLES, LIVE_ROOM_TRADES_MAX, RPC_WAITS, VERSION_TRANSACTION_LOOKS } from "./config";
+import { indexedTransactions, indexerCursors, markets, metadataSnapshots, programFacts, programVersions, strategies, trades } from "terminal-db";
+import { and, eq, inArray, isNull, like, max, notExists, sql } from "drizzle-orm";
+import { CANDLES, EVENTS_BACKFILL_PER_RUN, LIVE_ROOM_TRADES_MAX, RPC_WAITS, VERSION_TRANSACTION_LOOKS } from "./config";
+
+/** The cursor of a strategy's events backfill, and the row that says it is done, in `indexer_cursors` (#88). */
+const EVENTS_BACKFILL_PREFIX = "events:";
+const EVENTS_DONE_PREFIX = "events-done:";
+
+/** The strategy programs whose events are stored from their first transaction on. */
+async function readEventsDone(db: Db): Promise<Set<string>> {
+  const rows = await db.select({ account: indexerCursors.account }).from(indexerCursors).where(like(indexerCursors.account, `${EVENTS_DONE_PREFIX}%`));
+  return new Set(rows.map((r) => r.account.slice(EVENTS_DONE_PREFIX.length)));
+}
 import type { LiveEvent } from "./contract";
 import { fetchStrategiesMetadata } from "./metadata";
 import { fetchTokenImages, type ImageStore } from "./tokenImages";
@@ -107,6 +117,8 @@ export class IndexerCore {
   private watched: Set<string> | null = null;
   /** Each strategy program's reconciliation cursor, once this instance knows it (null: it has no history yet). */
   private strategyCursors = new Map<string, Cursor | null>();
+  /** The strategy programs whose events are stored from their first transaction on (#88), read once from Postgres. */
+  private eventsDone: Set<string> | null = null;
   /**
    * Each watched program's ProgramData slot as last seen, which the watch compares, and the slot of
    * its version in force, which an extension of the program moves the first away from. Both are
@@ -500,20 +512,38 @@ export class IndexerCore {
       const cursor = this.strategyCursors.get(program);
       if (cursor === undefined || (await this.hasNew(program, cursor))) due.push(program);
     }
+    const eventsDone = this.eventsDone ?? (this.eventsDone = await this.withDb(readEventsDone));
+    const backfill = [...watched].sort().filter((program) => !eventsDone.has(program));
     const indexed = emptyResult();
-    if (!due.length) return { quiet: true, indexed };
+    if (!due.length && !backfill.length) return { quiet: true, indexed };
     const handle = this.withStrategies(watched);
     return this.withDb(async (db) => {
       const failed: { program: string; error: unknown }[] = [];
       for (const program of due) {
         try {
           const known = this.strategyCursors.get(program);
-          const { result, cursor } = await reconcileAccount(db, this.source, handle, program, { cursor: known ?? (await readCursor(db, program)) });
+          const from = known ?? (await readCursor(db, program));
+          const { result, cursor, complete } = await reconcileAccount(db, this.source, handle, program, { cursor: from });
           this.strategyCursors.set(program, cursor);
           addResult(indexed, result);
+          // A program read from its first transaction stored its events with everything else.
+          if (from === null && complete && !eventsDone.has(program)) await this.markEventsDone(db, program);
         } catch (error) {
           // Where it stopped is in Postgres; the next run reads it from there.
           this.strategyCursors.delete(program);
+          failed.push({ program, error });
+        }
+      }
+      // A program indexed before strategy events were stored (#88) has its history read again for
+      // them alone, under a cursor of its own, a page budget a run, until it reaches the newest.
+      const isWatched = (p: string) => watched.has(p);
+      for (const program of backfill.filter((p) => !eventsDone.has(p))) {
+        try {
+          const key = `${EVENTS_BACKFILL_PREFIX}${program}`;
+          const { result, complete } = await reconcileAccount(db, this.source, strategyEventsHandler(isWatched), program, { cursorKey: key, limit: EVENTS_BACKFILL_PER_RUN });
+          addResult(indexed, result);
+          if (complete) await this.markEventsDone(db, program);
+        } catch (error) {
           failed.push({ program, error });
         }
       }
@@ -522,6 +552,12 @@ export class IndexerCore {
       if (failed.length) throw new AggregateError(failed.map((f) => f.error), `reconciling ${failed.map((f) => f.program).join(", ")} failed`);
       return { quiet: false, indexed };
     });
+  }
+
+  /** Records that a program's events are stored from its first transaction on, so its history is not read again for them. */
+  private async markEventsDone(db: Db, program: string) {
+    await db.insert(indexerCursors).values({ account: `${EVENTS_DONE_PREFIX}${program}` }).onConflictDoNothing();
+    this.eventsDone?.add(program);
   }
 
   /** Whether the program has a transaction after its cursor; with none yet, whether it has any. */

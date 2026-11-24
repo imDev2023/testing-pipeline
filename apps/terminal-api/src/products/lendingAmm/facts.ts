@@ -9,6 +9,7 @@ import { markets, type Db } from "terminal-db";
 import type { Fact } from "terminal-explainer";
 import { AVIARY_MINT_NAMES } from "../../config";
 import { mintFacts } from "../../facts";
+import { TRADE_MAX_RESERVE_AGE_SLOTS } from "lending-amm-scripts/client/index.ts";
 import { readLending } from "./read";
 import type { LendingView } from "./view";
 
@@ -48,13 +49,16 @@ export function units(raw: bigint, decimals: number): string {
 const bps = (value: number) => `${(value / 100).toFixed(2)}%`;
 const yesNo = (on: boolean | null, what: string) => (on === null ? `${what}: not read` : `${what}: ${on ? "on" : "off"}`);
 
-export type FactNames = { lent: string; lentDecimals: number; other: string; otherDecimals: number };
+/** Each side's name and decimals; decimals not read yet are null, and its amounts are then written in base units. */
+export type FactNames = { lent: string; lentDecimals: number | null; other: string; otherDecimals: number | null };
+
+const amountOf = (raw: bigint, decimals: number | null, name: string) => (decimals === null ? `${raw} base units of ${name}` : `${units(raw, decimals)} ${name}`);
 
 /** The panel's facts of one market, in words the validator can check against the figures. */
 export function lendingFacts(market: string, view: LendingView, names: FactNames): Fact[] {
   const source = `the market state ${view.marketState}, Kamino's reserve, its lending market and the LP mint, read at slot ${view.slot}`;
-  const lent = (raw: bigint) => `${units(raw, names.lentDecimals)} ${names.lent}`;
-  const other = (raw: bigint) => `${units(raw, names.otherDecimals)} ${names.other}`;
+  const lent = (raw: bigint) => amountOf(raw, names.lentDecimals, names.lent);
+  const other = (raw: bigint) => amountOf(raw, names.otherDecimals, names.other);
   const { kamino: k, sells, lp } = view;
   const facts: Fact[] = [];
   facts.push({
@@ -78,7 +82,7 @@ export function lendingFacts(market: string, view: LendingView, names: FactNames
       : sells.refused === "reserve-unreadable"
         ? "No sell trades: the program refuses to read Kamino's reserve."
         : sells.refused === "reserve-stale"
-          ? `No sell trades until someone refreshes Kamino's reserve: its last refresh is ${k.refreshAgeSlots} slots old, beyond the 9000 slots quotes and swaps accept.`
+          ? `No sell trades until someone refreshes Kamino's reserve: its last refresh is ${k.refreshAgeSlots} slots old, beyond the ${TRADE_MAX_RESERVE_AGE_SLOTS} slots quotes and swaps accept.`
           : `The largest sell the buffer pays alone is ${sells.bufferPaysAll ? "every sell the market can take" : sells.bufferAlone === null ? "none" : other(sells.bufferAlone)}, and a larger one redeems its shortfall from Kamino; with what Kamino can pay right now (${lent(k.canPay)}) on top, ${sells.withKaminoPaysAll ? "every sell the market can take is paid" : sells.withKamino === null ? "no sell is paid" : `the largest sell paid is ${other(sells.withKamino)}, and a larger one fails`}.`;
   facts.push({ group: GROUP, label: "Largest sells", value: sellWords, source });
   facts.push({
@@ -106,12 +110,13 @@ export async function lendingEvidence(db: Db, representative: string | null, rpc
   if (!representative) return [...LENDING_RISKS];
   const [row] = await db.select({ state: markets.marketState }).from(markets).where(eq(markets.address, representative));
   const unread = (why: string): Fact[] => [{ group: GROUP, label: "Lending AMM panel of the sampled market", value: `Not read: ${why}.`, source: "Aviary's read of the market state and Kamino's reserve" }, ...LENDING_RISKS];
-  if (!row || !rpcUrl) return unread("Aviary had no RPC to read it with when this evidence was built");
+  if (!row) return unread("Aviary has not indexed the sampled market");
+  if (!rpcUrl) return unread("Aviary had no RPC to read it with when this evidence was built");
   try {
     const { view } = await readLending(createSolanaRpc(rpcUrl), address(row.state), null);
     const decimals = new Map((await mintFacts(db, representative)).map((m) => [m.mint, m.decimals]));
     const name = (mint: string) => AVIARY_MINT_NAMES[mint] ?? `token ${mint}`;
-    const names: FactNames = { lent: name(view.lentMint), lentDecimals: decimals.get(view.lentMint) ?? 0, other: name(view.otherMint), otherDecimals: decimals.get(view.otherMint) ?? 0 };
+    const names: FactNames = { lent: name(view.lentMint), lentDecimals: decimals.get(view.lentMint) ?? null, other: name(view.otherMint), otherDecimals: decimals.get(view.otherMint) ?? null };
     return [...lendingFacts(representative, view, names), ...LENDING_RISKS];
   } catch (e) {
     console.error(`reading the lending AMM market ${representative} for its evidence failed`, e);

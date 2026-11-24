@@ -32,6 +32,12 @@ describe("lendingFacts", () => {
     expect(facts.every((f) => f.source === `the market state ${MARKET_STATE}, Kamino's reserve, its lending market and the LP mint, read at slot ${SLOT}`)).toBe(true);
   });
 
+  it("writes amounts in base units, saying so, while a mint's decimals are not read", () => {
+    const view = lendingView({ slot: BigInt(SLOT), marketState: MARKET_STATE, state: marketState(STATE), reserve: reserve({ lastUpdateSlot: BigInt(SLOT - 5) }), lendingMarket: lendingMarket(), clock: clock(BigInt(SLOT)), lpMint: mint(31_622_775_601n), lockAccount: null });
+    const facts = lendingFacts(MARKET, view, { lent: "SOL", lentDecimals: 9, other: `token ${TOKEN}`, otherDecimals: null });
+    expect(facts.find((f) => f.label === "Largest sells")!.value).toMatch(/^The largest sell the buffer pays alone is \d+ base units of token /);
+  });
+
   it("names the spec's three risks", () => {
     expect(LENDING_RISKS.map((r) => r.label)).toEqual(["Risk: Kamino can stop redeems", "Risk: LPs bear Kamino's losses", "Risk: large sells can fail"]);
     expect(LENDING_RISKS[0]!.value).toMatch(/emergency council can stop redeems.*ETH reserve for about 16 hours/);

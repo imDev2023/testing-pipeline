@@ -15,7 +15,7 @@ import { MintFactList } from "@/components/facts/MarketFacts";
 import forms from "@/components/forms/Forms.module.css";
 import { TransactionReview } from "@/components/forms/TransactionReview";
 import { useReview } from "@/components/forms/useReview";
-import { NewMarket } from "@/components/create/CreateMarket";
+import { NewMarket } from "@/components/create/NewMarket";
 import { MintLabel } from "@/components/MintLabel";
 import { PanelFrame, useLoad } from "@/components/Panel";
 import { useWallet } from "@/components/wallet/WalletProvider";

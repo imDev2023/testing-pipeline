@@ -40,14 +40,26 @@ type Request = { action: string; args: Record<string, string | boolean>; inputs:
 /** The forms, once the panel is read for the connected wallet. */
 export function LendingAmmForms({ market }: { market: Market }) {
   const { account } = useWallet();
-  const { state, refresh } = useLendingPanel(market.address, account?.address ?? null);
-  if (state.status !== "loaded") return null;
+  const { state, refresh, retry } = useLendingPanel(market.address, account?.address ?? null);
+  // These forms stand in for the metadata's own, so while they cannot be filled in they say so rather than vanish.
+  if (state.status === "loading") return <p className={forms.note}>Loading the lending AMM&apos;s forms…</p>;
+  if (state.status === "failed")
+    return (
+      <div className={forms.unavailable} role="alert">
+        <p>The lending AMM&apos;s forms (add, remove, lock, rebalance) are filled in from the market&apos;s reading, which could not be loaded. {state.message}</p>
+        <div>
+          <button type="button" onClick={retry}>
+            Try again
+          </button>
+        </div>
+      </div>
+    );
   return <LendingFormsBody market={market} panel={state.data} onDone={refresh} />;
 }
 
 export function LendingFormsBody({ market, panel, onDone }: { market: Market; panel: Panel; onDone: () => void }) {
   const { lent, other } = sidesOf(market, panel);
-  const stale = panel.kamino.refresh_age_slots !== null && panel.kamino.refresh_age_slots > 4_500 && !panel.kamino.lending_market_emergency && !panel.kamino.deprecated && panel.kamino.problem === null;
+  const stale = panel.kamino.refresh_age_slots !== null && panel.kamino.refresh_age_slots > panel.kamino.refresh_after_slots && !panel.kamino.lending_market_emergency && !panel.kamino.deprecated && panel.kamino.problem === null;
   return (
     <div className={forms.list} aria-label="The lending AMM's forms">
       <p className={forms.note}>Aviary fills these in from the strategy&apos;s metadata and the panel&apos;s reading, with {DEFAULT_SLIPPAGE_PERCENT}% of room for the price moving before your transaction lands.</p>
@@ -193,7 +205,7 @@ function RemoveForm({ market, panel, lent, other, onDone }: { market: Market; pa
         : { action: "remove_liquidity", args: { lp: String(lp), min_other: String(parts.minOther), min_lent: String(parts.minLent), in_kind: false }, inputs: { collateral_mint: panel.collateral_mint, ...kamino } }
       : null;
   return (
-    <ProductForm title="Remove liquidity" calls={inKind ? "remove_liquidity (in kind)" : "remove_liquidity"} market={market} panel={panel} request={request} missing={missing} version={`${typed}:${chosen}`} onDone={onDone}>
+    <ProductForm title="Remove liquidity" calls="remove_liquidity" market={market} panel={panel} request={request} missing={missing} version={`${typed}:${chosen}`} onDone={onDone}>
       <p className={forms.line}>Burns LP shares for their part of the market: the other token, the buffer&apos;s {lent.symbol ?? "lent token"}, and the market&apos;s cTokens, redeemed from Kamino in cash or paid as cTokens in kind.</p>
       <AmountField
         id={`remove-${market.address}`}
@@ -280,7 +292,7 @@ function RefreshForm({ market, panel, onDone }: { market: Market; panel: Panel; 
   return (
     <ProductForm title="Refresh Kamino's reserve" calls="klend refresh_reserve" market={market} panel={panel} request={null} missing={null} version="" prepare={prepare} onDone={onDone} open>
       <p className={forms.line}>
-        Kamino&apos;s reserve was last refreshed {panel.kamino.refresh_age_slots?.toLocaleString("en-US")} slots ago. Quotes and swaps of a market holding cTokens take a reserve refreshed within the last 9,000 slots, so this market trades again once anyone refreshes it. This is Kamino&apos;s own instruction, which anyone may send for the network fee.
+        Kamino&apos;s reserve was last refreshed {panel.kamino.refresh_age_slots?.toLocaleString("en-US")} slots ago. Quotes and swaps of a market holding cTokens take a reserve refreshed within the last {panel.kamino.trade_max_age_slots.toLocaleString("en-US")} slots, so this market trades again once anyone refreshes it. This is Kamino&apos;s own instruction, which anyone may send for the network fee.
       </p>
     </ProductForm>
   );

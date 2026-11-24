@@ -14,6 +14,36 @@ const entries = new Map<string, Entry>();
 
 const keyOf = (market: string, wallet: string | null) => `${market}:${wallet ?? ""}`;
 
+/** How many times each market's figures were read again after an action, so its history reads itself again too. */
+const changes = new Map<string, { version: number; listeners: Set<() => void> }>();
+function changesOf(market: string) {
+  let entry = changes.get(market);
+  if (!entry) {
+    entry = { version: 0, listeners: new Set() };
+    changes.set(market, entry);
+  }
+  return entry;
+}
+
+/** A number that grows each time an action on the market confirms, for what must read itself again then. */
+export function useMarketChanges(market: string): number {
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      const entry = changesOf(market);
+      entry.listeners.add(listener);
+      return () => entry.listeners.delete(listener);
+    },
+    [market],
+  );
+  return useSyncExternalStore(subscribe, () => changesOf(market).version, () => 0);
+}
+
+function changed(market: string) {
+  const entry = changesOf(market);
+  entry.version++;
+  for (const listener of entry.listeners) listener();
+}
+
 function entryOf(key: string): Entry {
   let entry = entries.get(key);
   if (!entry) {
@@ -38,7 +68,12 @@ function load(market: string, wallet: string | null, { quiet }: { quiet: boolean
   if (!quiet || entry.state.status !== "loaded") set(entry, { status: "loading" });
   getFromApi(`/v1/markets/${market}/lending-amm${wallet ? `?wallet=${wallet}` : ""}`, LendingPanel, { signal: controller.signal }).then(
     (data) => !controller.signal.aborted && set(entry, { status: "loaded", data }),
-    (e: unknown) => !controller.signal.aborted && set(entry, { status: "failed", message: e instanceof ApiFailure ? e.message : "Something went wrong on this page." }),
+    (e: unknown) => {
+      if (controller.signal.aborted) return;
+      // A read again after an action that fails keeps the figures on screen, and the forms with them; "Read again" tries once more.
+      if (quiet && entry.state.status === "loaded") return;
+      set(entry, { status: "failed", message: e instanceof ApiFailure ? e.message : "Something went wrong on this page." });
+    },
   );
 }
 
@@ -71,6 +106,9 @@ export function useLendingPanel(market: string, wallet: string | null) {
   return {
     state,
     retry: useCallback(() => load(market, wallet, { quiet: false }), [market, wallet]),
-    refresh: useCallback(() => load(market, wallet, { quiet: true }), [market, wallet]),
+    refresh: useCallback(() => {
+      load(market, wallet, { quiet: true });
+      changed(market);
+    }, [market, wallet]),
   };
 }

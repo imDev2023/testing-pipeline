@@ -44,6 +44,12 @@ export const JOB_INTERVAL_MINUTES = {
 export type JobName = keyof typeof JOB_INTERVAL_MINUTES;
 
 /**
+ * How many transactions of a strategy's history one reconciliation run reads again for its events
+ * alone, for a strategy indexed before strategy events were stored (#88), until it reaches the newest.
+ */
+export const EVENTS_BACKFILL_PER_RUN = 500;
+
+/**
  * How many ProgramData watches look again for a strategy version's deploy transaction the RPC had
  * not served when the version was recorded, before leaving it without one (PIPESCOPE-113).
  */

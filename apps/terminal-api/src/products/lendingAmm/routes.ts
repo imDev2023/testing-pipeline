@@ -24,12 +24,12 @@ import { prepareActionResponse } from "../../trading/actionRoutes";
 import { addressOf, bodyOf, refused } from "../../trading/routes";
 import { PrepareActionRequest } from "../../contract";
 import { readKeeperView, refreshFirst } from "./actions";
-import { refreshReserveInstruction } from "keeper-jobs/lending-amm.ts";
+import { REFRESH_AFTER_SLOTS, refreshReserveInstruction } from "keeper-jobs/lending-amm.ts";
 import { prepareTransaction } from "../../trading/action";
 import { AccountRole, type Instruction } from "@solana/kit";
 import { LendingCreateForm, LendingHistory, LendingPanel, PrepareLendingCreate, PreparedLendingCreate, PrepareRefresh, PreparedRefresh } from "./contract";
 import { lentMints, prepareLendingCreate } from "./create";
-import { MAX_LP_FEE_BPS, MINIMUM_LIQUIDITY } from "lending-amm-scripts/client/index.ts";
+import { MAX_LP_FEE_BPS, MINIMUM_LIQUIDITY, TRADE_MAX_RESERVE_AGE_SLOTS } from "lending-amm-scripts/client/index.ts";
 import { readLendingHistory } from "./history";
 import { LENDING_AMM_PROGRAM, NotLendingMarket, readLending, type LendingRead } from "./read";
 import { LP_DECIMALS, typedFor } from "./view";
@@ -107,6 +107,8 @@ export function panelOf(market: string, row: { feeMint: string | null; createdAt
       refresh_age_slots: n(k.refreshAgeSlots),
       withdrawal_cap_remaining: opt(k.withdrawalCapRemaining),
       can_pay: s(k.canPay),
+      trade_max_age_slots: Number(TRADE_MAX_RESERVE_AGE_SLOTS),
+      refresh_after_slots: Number(REFRESH_AFTER_SLOTS),
     },
     sells: {
       refused: view.sells.refused,
@@ -187,7 +189,7 @@ export function lendingAmmRoutes(app: Hono<AppEnv>) {
   app.get("/v1/markets/:market/lending-amm/history", async (c) => {
     const market = addressOf(c.req.param("market"), "market");
     const before = c.req.query("before") ?? null;
-    if (before !== null && !/^\d+:\d+:\d+$/.test(before)) throw new HTTPException(400, { message: "before is a cursor this endpoint gave." });
+    if (before !== null && !/^\d+:\d+:\d+:[1-9A-HJ-NP-Za-km-z]{32,90}$/.test(before)) throw new HTTPException(400, { message: "before is a cursor this endpoint gave." });
     const history = await withDb(c, async (db) => {
       const row = await lendingMarketRow(db, market);
       return readLendingHistory(db, { market, marketState: row.state, before, limit: LENDING_AMM.historyPage });

@@ -87,6 +87,8 @@ const read: LendingPanel = {
     refresh_age_slots: 67,
     withdrawal_cap_remaining: "10000000000000",
     can_pay: "232275027",
+    trade_max_age_slots: 9_000,
+    refresh_after_slots: 4_500,
   },
   sells: { refused: null, buffer_alone: "123456789", buffer_pays_all: false, with_kamino: "987654321", with_kamino_pays_all: false, into_market: { buffer_alone: "123456789", with_kamino: "987654321" } },
   lp: { supply: "12448825376", share_count: "12448826376", locked: "160189546", minimum_liquidity: "1000", decimals: 9, value_other: "43370084650", value_lent: "23322984" },
@@ -170,7 +172,7 @@ describe("the panel", () => {
 });
 
 describe("the history", () => {
-  const event = (over: Partial<LendingEvent>): LendingEvent => ({ signature: "5j7s3Gm8z1", slot: 525_800_000, block_time: "2026-11-24T10:00:00.000Z", kind: "liquidity-added", account: WALLET, fields: {}, ...over });
+  const event = (over: Partial<LendingEvent>): LendingEvent => ({ signature: "5j7s3Gm8z1", position: 0, slot: 525_800_000, block_time: "2026-11-24T10:00:00.000Z", kind: "liquidity-added", account: WALLET, fields: {}, ...over });
   const history: LendingHistory = {
     market: market.address,
     next_before: null,
