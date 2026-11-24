@@ -7,14 +7,13 @@
 // new market's page once Aviary has read it. When no strategy has valid metadata, the page says so
 // above the list.
 import { generateKeyPairSigner, getTransactionDecoder, getTransactionEncoder, partiallySignTransaction, type KeyPairSigner } from "@solana/kit";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Market, PreparedMarket, StrategiesList, StrategyForms, type Form, type Strategy } from "terminal-api/contract";
+import { useCallback, useRef, useState } from "react";
+import { PreparedMarket, StrategiesList, StrategyForms, type Form, type Strategy } from "terminal-api/contract";
 import { getFromApi, postToApi } from "@/api";
-import { BRAND } from "@/brand";
-import { CLUSTER, NEW_MARKET_ASK_EVERY_MS, NEW_MARKET_WAIT_MS } from "@/config";
+import { CLUSTER } from "@/config";
 import { formatInteger, formatTokenAmount } from "@/format";
+import { PRODUCT_PANELS, type ProductRegistry } from "@/products/registry";
 import { ROUTES } from "@/routes";
 import { PanelFrame, useLoad } from "../Panel";
 import { ShortAddress } from "../ShortAddress";
@@ -30,6 +29,7 @@ import { TransactionReview } from "../forms/TransactionReview";
 import { useFormFields } from "../forms/useFormFields";
 import { useReview } from "../forms/useReview";
 import styles from "./Create.module.css";
+import { NewMarket } from "./NewMarket";
 
 /** Why a strategy offers no create form, from its listed metadata status, or null when its forms may hold one. */
 function noCreateForm(strategy: Strategy): string | null {
@@ -37,7 +37,7 @@ function noCreateForm(strategy: Strategy): string | null {
   return strategy.create_form ? null : "No create form: its metadata describes none.";
 }
 
-export function CreateMarket() {
+export function CreateMarket({ registry = PRODUCT_PANELS }: { registry?: ProductRegistry }) {
   const params = useSearchParams();
   const router = useRouter();
   const chosen = params.get("strategy");
@@ -50,7 +50,7 @@ export function CreateMarket() {
       <PanelFrame title="Choose a strategy" what="the registered strategies" state={state} retry={retry}>
         {({ strategies }) => <StrategyChooser strategies={strategies} chosen={chosen} onChoose={choose} />}
       </PanelFrame>
-      {chosen && state.status === "loaded" && state.data.strategies.some((s) => s.program === chosen && s.create_form) && <CreateFormPanel key={chosen} program={chosen} />}
+      {chosen && state.status === "loaded" && <ChosenForms key={chosen} program={chosen} strategies={state.data.strategies} registry={registry} />}
     </>
   );
 }
@@ -97,6 +97,21 @@ export function StrategyChooser({ strategies, chosen, onChoose }: { strategies: 
           );
         })}
       </ul>
+    </>
+  );
+}
+
+/**
+ * The chosen strategy's forms: one of our products' own create form when it has one (PIPESCOPE-158),
+ * then the strategy's generic create form from its metadata, when its metadata may hold one.
+ */
+export function ChosenForms({ program, strategies, registry }: { program: string; strategies: Strategy[]; registry: ProductRegistry }) {
+  const Product = registry[program]?.Create;
+  const generic = strategies.some((s) => s.program === program && s.create_form);
+  return (
+    <>
+      {Product && <Product program={program} />}
+      {generic && <CreateFormPanel program={program} />}
     </>
   );
 }
@@ -186,34 +201,3 @@ function CreateForm({ form, view }: { form: Form; view: StrategyForms }) {
 
 const NO_MINTS: never[] = [];
 const SOL_DECIMALS = 9;
-
-/** The new market's page, linked once Aviary has read the market, or after the wait in any case. */
-function NewMarket({ market }: { market: string }) {
-  const [ready, setReady] = useState(false);
-  useEffect(() => {
-    let stopped = false;
-    const until = Date.now() + NEW_MARKET_WAIT_MS;
-    const ask = async () => {
-      while (!stopped && Date.now() < until) {
-        try {
-          await getFromApi(`/v1/markets/${market}`, Market);
-          break;
-        } catch {
-          await new Promise((done) => setTimeout(done, NEW_MARKET_ASK_EVERY_MS));
-        }
-      }
-      if (!stopped) setReady(true);
-    };
-    void ask();
-    return () => {
-      stopped = true;
-    };
-  }, [market]);
-  return ready ? (
-    <p>
-      <Link href={ROUTES.market(market)}>Open the new market&apos;s page</Link>
-    </p>
-  ) : (
-    <p>{BRAND.name} is reading the new market; its page is linked here as soon as it has.</p>
-  );
-}

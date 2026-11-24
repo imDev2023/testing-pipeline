@@ -182,6 +182,9 @@ importers:
       '@pipeline-sol/sdk':
         specifier: 'catalog:'
         version: 0.3.0(typescript@6.0.3)
+      '@solana-program/token-2022':
+        specifier: 0.20.0
+        version: 0.20.0(@solana/kit@8.6.0(typescript@6.0.3))(@solana/sysvars@8.6.0(typescript@6.0.3))
       '@solana/kit':
         specifier: 8.6.0
         version: 8.6.0(typescript@6.0.3)
@@ -203,6 +206,9 @@ importers:
       react-dom:
         specifier: 19.3.1
         version: 19.3.1(react@19.3.1)
+      tax-amm-scripts:
+        specifier: workspace:*
+        version: link:../../programs/tax-amm/scripts
       terminal-api:
         specifier: workspace:*
         version: link:../terminal-api

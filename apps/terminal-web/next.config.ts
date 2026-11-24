@@ -5,7 +5,7 @@ import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 const config: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
-  transpilePackages: ["terminal-api"],
+  transpilePackages: ["terminal-api", "tax-amm-scripts"],
   images: { unoptimized: true },
   // Next's dev badge would sit over the pages the end-to-end tests photograph.
   devIndicators: false,

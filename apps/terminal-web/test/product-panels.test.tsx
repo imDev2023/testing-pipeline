@@ -7,8 +7,11 @@ import type { Market } from "terminal-api/contract";
 import { describe, expect, it } from "vitest";
 import { MarketLowBand } from "@/components/market/MarketLowBand";
 import { PRODUCT_PANELS, type ProductRegistry } from "@/products/registry";
+import { TaxLaunch } from "@/products/taxAmm/TaxLaunch";
+import { TaxPanel } from "@/products/taxAmm/TaxPanel";
 
 const TEST_PROGRAM = "TestPane1111111111111111111111111111111111";
+/** The tax AMM's program: one of ours, with its own panel, but not the test registry's. */
 const OTHER_PROGRAM = "J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t";
 
 const market = (strategy: string, address: string): Market => ({
@@ -39,8 +42,10 @@ const registry: ProductRegistry = {
 const facts = <section aria-label="Facts">The facts panel</section>;
 
 describe("the product panels' registry", () => {
-  it("is empty until the products' Aviary tickets fill it", () => {
-    expect(PRODUCT_PANELS).toEqual({});
+  it("holds the tax AMM's panel and launch form under its program, and nothing for a program not ours (#75)", () => {
+    expect(Object.keys(PRODUCT_PANELS)).toEqual([OTHER_PROGRAM]);
+    expect(PRODUCT_PANELS[OTHER_PROGRAM]).toEqual({ Panel: TaxPanel, Create: TaxLaunch });
+    expect(PRODUCT_PANELS[TEST_PROGRAM]).toBeUndefined();
   });
 
   it("puts a registered product's panel before the forms, and its forms under Actions, on its program's markets", () => {

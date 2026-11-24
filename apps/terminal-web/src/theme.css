@@ -105,6 +105,12 @@
   --chart-height: 380px;
   /* Create market's strategy chooser: a strategy beside its button; one under the other at 720 px and narrower. */
   --create-choice-columns: minmax(0, 1fr) auto;
+  /* The tax AMM's launch form and panel (products/taxAmm): a recipient's wallet beside its share and
+     its buttons, and a payout's line in columns; at 720 px and narrower the buttons, and each part of
+     the line, go under the others. */
+  --tax-recipient-columns: minmax(0, 1fr) 7.5em auto;
+  --tax-recipient-actions-column: auto;
+  --tax-slot-columns: minmax(9em, 1.1fr) minmax(7em, 0.9fr) minmax(0, 1.4fr);
   /* Its lower band: the forms beside the facts panel. */
   --market-low-columns: minmax(0, 1fr) minmax(0, 1fr);
   /* The trade box stays in view while the page scrolls, at desktop width only. */
@@ -181,6 +187,9 @@
     --flag-fact-columns: minmax(0, 1fr);
     --fact-columns: minmax(0, 1fr);
     --create-choice-columns: minmax(0, 1fr);
+    --tax-recipient-columns: minmax(0, 1fr) 7.5em;
+    --tax-recipient-actions-column: 1 / -1;
+    --tax-slot-columns: minmax(0, 1fr);
     --canary-detail-indent: 0;
     --canary-bar-width: 30%;
     --canary-label-wrap: normal;

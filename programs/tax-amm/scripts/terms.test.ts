@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { address } from '@solana/kit';
 
-import { NO_PENDING_CHANGE, termsArg, termsHash } from './terms.ts';
+import { NO_PENDING_CHANGE, termsArg, termsHash, termsPreimage } from './terms.ts';
+import { webTermsHash } from './terms-web.ts';
 
 const DEFAULT = address('11111111111111111111111111111111');
 const params = {
@@ -33,6 +34,14 @@ test('the terms hash is the one the program checks', () => {
     assert.equal(termsArg(termsHash(mints, params)), EXPECTED_NONE);
     assert.equal(termsArg(termsHash(mints, params, { buyTaxBps: 800, sellTaxBps: 900, fromSlot: 12_345n })), EXPECTED_PENDING);
     assert.notEqual(termsArg(termsHash(mints, params, NO_PENDING_CHANGE)), EXPECTED_PENDING);
+});
+
+test('the browser\'s hash, WebCrypto over the same bytes, is the same hash', async () => {
+    // Aviary's launch form hashes in the page, where node:crypto is not (terms-web.ts).
+    assert.equal(termsArg(await webTermsHash(mints, params)), EXPECTED_NONE);
+    const pending = { buyTaxBps: 800, sellTaxBps: 900, fromSlot: 12_345n };
+    assert.equal(termsArg(await webTermsHash(mints, params, pending)), EXPECTED_PENDING);
+    assert.equal(termsPreimage(mints, params).length, 2 * 32 + 224 + 12);
 });
 
 const EXPECTED_NONE = 'FBQRE7k7qyqiavt2rD3WFVRj2wrjESjBLU36g3TZSKbs';
