@@ -55,8 +55,16 @@ describe("a buy wall strategy's evidence", () => {
     expect(made).toEqual([]);
     expect(unread).toEqual([BUY_WALL]);
     expect(await client.db.select().from(explainerKeys)).toHaveLength(0);
-    // And with no RPC to read it with.
-    expect((await makeExplainerKeys(client.db)).unread).toEqual([BUY_WALL]);
+  });
+
+  it("says the sampled market was not read when its caller gave no RPC, as the e2e suite's seeding does", async () => {
+    const { made } = await makeExplainerKeys(client.db);
+    expect(made).toEqual([BUY_WALL]);
+    const [key] = await client.db.select().from(explainerKeys);
+    const evidence = key!.evidence as EvidenceItem[];
+    expect(evidence.find((e) => e.label === "Sampled market's state")!.value).toBe("Not read by Aviary for this explanation.");
+    expect(evidence.filter((e) => e.label.startsWith("Risk: "))).toHaveLength(3);
+    await client.db.delete(explainerKeys);
   });
 
   it("carries the panel's facts of the sampled market, read at one slot, and the three risks", async () => {

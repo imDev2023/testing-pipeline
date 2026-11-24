@@ -256,8 +256,10 @@ async function productItems(db: Db, program: string, representative: string | nu
   if (!representative) return [...product.risks];
   const [row] = await db.select({ marketState: markets.marketState }).from(markets).where(eq(markets.address, representative));
   const mintRows = await db.select({ mint: marketMints.mint }).from(marketMints).where(eq(marketMints.market, representative)).orderBy(asc(marketMints.position));
+  if (!row) throw new ProductNotRead("the sampled market is not indexed yet");
+  // A caller with no RPC (a test, the e2e suite's seeding script) chose not to read the chain: its key says so.
+  if (!read) return [{ group: "Market", label: "Sampled market's state", value: "Not read by Aviary for this explanation.", source: "the sampled market's state account" }, ...product.risks];
   // Without the panel's facts the evidence would be poorer for good, since a recorded key is never rebuilt: a read that fails makes the key wait for a later run.
-  if (!row || !read) throw new ProductNotRead("no RPC to read the sampled market's state");
   try {
     return [...(await product.facts({ marketState: row.marketState, mints: mintRows.map((m) => m.mint) }, read)), ...product.risks];
   } catch (e) {

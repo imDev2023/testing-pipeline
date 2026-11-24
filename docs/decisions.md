@@ -3556,7 +3556,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### EXPLAINER-29: Our products' facts and risks as evidence
 
 - Question: What does the evidence add for a strategy that is one of our products?
-- Answer: F items of what its panel shows of the representative market, read from its market state and the accounts it names at one slot, each giving that slot as its source, and the risks of every market of it from its spec; a product with no representative market gets its risks alone, and a read that fails says so.
+- Answer: F items of what its panel shows of the representative market, read from its market state and the accounts it names at one slot, each giving that slot as its source, and the risks of every market of it from its spec; a product with no representative market gets its risks alone; a read that fails makes the key wait for the job's next run, since a recorded key is never rebuilt, and a caller with no RPC gets an item saying the market was not read.
 - Alternatives: Leaving the products to the generic chain facts, which read vault balances and miss the cap, the wall and the ledgers.
 - Specified in: [`docs/spec/pipescope-explainer.md`, Inputs](spec/pipescope-explainer.md#inputs)
 - Changes by: spec only
