@@ -58,17 +58,29 @@ async function wrappedSolOf(args: AviaryAction["args"], values: FormValues["args
 
 /**
  * The strategy's instruction with the wallet's wrapped SOL handled around it: when it writes to the
- * wallet's own wrapped-SOL account, that account is created if missing and `wrap` lamports moved in
- * before it, and closed back into the wallet after it.
+ * wallet's own wrapped-SOL account, `wrap` lamports are moved in before it; an account the wallet did
+ * not hold is created first and closed back into the wallet after it, while one it already held is
+ * left as it was, so wrapped SOL the wallet keeps for itself is never unwrapped by an action.
  */
-async function aroundWrappedSol(main: Instruction, trader: Address, wrap: bigint): Promise<{ instructions: Instruction[]; wrapped: bigint }> {
+async function aroundWrappedSol(main: Instruction, trader: Address, wrap: bigint, held: WrappedSol): Promise<{ instructions: Instruction[]; wrapped: bigint }> {
   const [account] = await findAssociatedTokenPda({ owner: trader, mint: NATIVE_MINT_ADDRESS, tokenProgram: TOKEN_PROGRAM_ADDRESS });
   const writes = (main.accounts ?? []).some((a) => a.address === account && (a.role === AccountRole.WRITABLE || a.role === AccountRole.WRITABLE_SIGNER));
   if (!writes) return { instructions: [main], wrapped: 0n };
   const signer = createNoopSigner(trader);
-  const before: Instruction[] = [getCreateAssociatedTokenIdempotentInstruction({ payer: signer, ata: account, owner: trader, mint: NATIVE_MINT_ADDRESS, tokenProgram: TOKEN_PROGRAM_ADDRESS })];
+  const before: Instruction[] = held === "missing" ? [getCreateAssociatedTokenIdempotentInstruction({ payer: signer, ata: account, owner: trader, mint: NATIVE_MINT_ADDRESS, tokenProgram: TOKEN_PROGRAM_ADDRESS })] : [];
   if (wrap > 0n) before.push(getTransferSolInstruction({ source: signer, destination: account, amount: wrap }), getSyncNativeInstruction({ account }));
-  return { instructions: [...before, main, getCloseAccountInstruction({ account, destination: trader, owner: signer })], wrapped: wrap };
+  const after = held === "missing" ? [getCloseAccountInstruction({ account, destination: trader, owner: signer })] : [];
+  return { instructions: [...before, main, ...after], wrapped: wrap };
+}
+
+/** Whether the wallet holds a wrapped-SOL account (its associated one) before the transaction. */
+export type WrappedSol = "missing" | "held";
+
+/** Whether the wallet already holds its wrapped-SOL account, read before an action or a new market is built. */
+export async function walletWrappedSol(rpc: Rpc<GetAccountInfoApi>, trader: Address): Promise<WrappedSol> {
+  const [account] = await findAssociatedTokenPda({ owner: trader, mint: NATIVE_MINT_ADDRESS, tokenProgram: TOKEN_PROGRAM_ADDRESS });
+  const { value } = await rpc.getAccountInfo(account, { encoding: "base64", commitment: COMMITMENT, dataSlice: { offset: 0, length: 0 } }).send();
+  return value ? "held" : "missing";
 }
 
 export type ActionInput = FormValues & {
@@ -78,6 +90,8 @@ export type ActionInput = FormValues & {
   /** Token programs known for mints the market does not hold (`input:` mints), else read through `rpc`. */
   tokenPrograms?: Record<string, Address>;
   rpc?: Rpc<GetAccountInfoApi>;
+  /** Whether the wallet holds its wrapped-SOL account already; missing unless said. */
+  walletWrappedSol?: WrappedSol;
 };
 
 /** A custom action as the instructions of its transaction, the action itself among them, and the SOL wrapped for it. */
@@ -87,7 +101,7 @@ export async function actionTransaction(input: ActionInput): Promise<{ instructi
   signedOnlyBy([main], [trader], "This action");
   const context: SourceContext = { strategyProgram: market.strategyProgram, wallet: trader, market, marketState: market.marketState, inputs, tokenPrograms, rpc };
   const wrap = await built(() => wrappedSolOf(action.args, args, context));
-  return { ...(await aroundWrappedSol(main, trader, wrap)), action: main };
+  return { ...(await aroundWrappedSol(main, trader, wrap, input.walletWrappedSol ?? "missing")), action: main };
 }
 
 export type CreateInput = FormValues & {
@@ -99,6 +113,7 @@ export type CreateInput = FormValues & {
   maxCreatorLamports: bigint;
   tokenPrograms?: Record<string, Address>;
   rpc?: Rpc<GetAccountInfoApi>;
+  walletWrappedSol?: WrappedSol;
 };
 
 /** A new market as the instructions of its transaction: the router's `create_market` from the create form, with wrapped SOL handled as for an action. */
@@ -109,7 +124,7 @@ export async function createMarketTransaction(input: CreateInput) {
   );
   signedOnlyBy([instruction], resolved.marketStateSigns ? [trader, resolved.marketState] : [trader], "Creating this market");
   const wrap = await built(() => wrappedSolOf(init.args, args, { strategyProgram: strategy, wallet: trader, marketState: resolved.marketState, inputs, tokenPrograms, rpc }));
-  return { ...(await aroundWrappedSol(instruction, trader, wrap)), market: resolved.market, marketState: resolved.marketState, marketStateSigns: resolved.marketStateSigns };
+  return { ...(await aroundWrappedSol(instruction, trader, wrap, input.walletWrappedSol ?? "missing")), market: resolved.market, marketState: resolved.marketState, marketStateSigns: resolved.marketStateSigns };
 }
 
 type Held = { lamports: bigint; owner: string; data: readonly [string, string] } | null;
@@ -170,7 +185,8 @@ export async function prepareTransaction(
   try {
     fitted = fitTransaction(instructions, trader, lifetime, table);
   } catch (e) {
-    if (e instanceof TooLarge) throw refusal("too_large", e.message.replace(/^This swap/, input.what));
+    // A new market has recorded no lookup table yet, so its refusal names none.
+    if (e instanceof TooLarge) throw refusal("too_large", input.market ? e.message.replace(/^This swap/, input.what) : `${input.what} needs more accounts than one transaction can carry.`);
     throw e;
   }
   const { value, networkFee } = await runSimulation(rpc, fitted.wire, fitted.messageBytes, watched, input.what);

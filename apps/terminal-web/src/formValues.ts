@@ -34,8 +34,14 @@ export function mintOf(source: AccountSource | null, context: MintContext): Mint
   return null;
 }
 
-/** The decimals an amount argument is typed in: those of the mint its `decimals_of` names, when known. */
+/** The decimals of the mint a source names, when known. */
 export const decimalsOf = (source: AccountSource | null, context: MintContext): number | null => mintOf(source, context)?.decimals ?? null;
+
+/** The unsigned integer types, the only ones an amount is typed in its mint's decimals for. */
+const UNSIGNED: readonly FormArg["type"][] = ["u8", "u16", "u32", "u64"];
+
+/** The decimals an argument is typed in: its `decimals_of` mint's, for an unsigned integer whose mint is known; else null, typed as it is sent. */
+export const amountDecimals = (arg: FormArg, context: MintContext): number | null => (UNSIGNED.includes(arg.type) ? decimalsOf(arg.decimals_of, context) : null);
 
 /** What a field holds, as the argument the API takes, or why it cannot be used yet. */
 export function argValue(arg: FormArg, typed: FieldValue | undefined, decimals: number | null): ArgReading {
@@ -48,7 +54,7 @@ export function argValue(arg: FormArg, typed: FieldValue | undefined, decimals: 
   if (range) {
     const outOfRange = { kind: "invalid", reason: `A ${arg.type} is a whole number from ${grouped(range[0])} to ${grouped(range[1])}.` } as const;
     let n: bigint;
-    if (decimals !== null && range[0] === 0n) {
+    if (decimals !== null && UNSIGNED.includes(arg.type)) {
       if (/^0*(\.0*)?$/.test(value)) return { kind: "ok", value: "0" };
       const amount = parseAmount(value, decimals);
       if (amount.kind === "invalid") return amount.reason.includes("decimal places") ? amount : outOfRange;

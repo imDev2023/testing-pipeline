@@ -53,6 +53,14 @@ describe("actionTransaction", () => {
     expect(programs(instructions)).toEqual([ASSOCIATED_TOKEN_PROGRAM_ADDRESS, TAX, TOKEN_PROGRAM_ADDRESS]);
   });
 
+  it("leaves a wrapped-SOL account the wallet already held as it is: wrapped into for the action, never created or closed", async () => {
+    const seed = await actionTransaction({ action: actionNamed(TAX_METADATA, "seed"), market, trader: TRADER, args: { amount_0: "250000000", amount_1: "1000000", expected_terms: TERMS }, inputs: {}, tokenPrograms, walletWrappedSol: "held" });
+    expect(seed.wrapped).toBe(250_000_000n);
+    expect(programs(seed.instructions)).toEqual([SYSTEM_PROGRAM_ADDRESS, TOKEN_PROGRAM_ADDRESS, TAX]);
+    const payout = await actionTransaction({ action: actionNamed(TAX_METADATA, "distribute"), market, trader: TRADER, args: { slot: "0" }, inputs: { tax_mint: NATIVE_MINT_ADDRESS, recipient: TRADER }, tokenPrograms, walletWrappedSol: "held" });
+    expect(payout.instructions).toEqual([payout.action]);
+  });
+
   it("builds an action that touches no wrapped SOL of the wallet's as the strategy's instruction alone", async () => {
     const { instructions, action, wrapped } = await actionTransaction({ action: actionNamed(TAX_METADATA, "set_taxes"), market, trader: TRADER, args: { buy_tax_bps: "600", sell_tax_bps: "900" }, inputs: {}, tokenPrograms });
     expect(wrapped).toBe(0n);

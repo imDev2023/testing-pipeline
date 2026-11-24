@@ -89,6 +89,14 @@ describe("an action's form", () => {
     expect(text).toContain("warn Calls withdraw_all on the strategy J4sA...nW9t: what this form calls could not be checked, since no instruction of the deployed program has the discriminator it sends.");
   });
 
+  it("writes an amount in its mint's tokens only for an unsigned integer, which is the only kind read in the mint's decimals", () => {
+    const amounts = form({ args: [{ name: "amount", type: "u64", label: null, description: null, decimals_of: { kind: "mint", index: 0 } }, { name: "delta", type: "i64", label: null, description: null, decimals_of: { kind: "mint", index: 0 } }] });
+    const text = textOf(render(forms({ actions: [amounts] })));
+    expect(text).toContain("amount u64, in SOL");
+    expect(text).toContain("delta i64 ");
+    expect(text).not.toContain("delta i64, in");
+  });
+
   it("gives each field its author's label and, plainly, its name and type, and lists every account it touches", () => {
     const text = textOf(render(forms({ actions: [form({})] })));
     expect(text).toContain("tax_mint a mint, by its address");
@@ -124,6 +132,11 @@ describe("Actions without forms", () => {
   it("says what Pipeline's validator said of an invalid document", () => {
     const text = textOf(render(forms({ metadata: "invalid", unavailable: "metadata-invalid", errors: ["name: required"], instructions_beyond_pipeline: null })));
     expect(text).toBe("No forms. Aviary builds a strategy's forms from its metadata, and this strategy's metadata is unavailable: the document did not pass Pipeline's validator. What Pipeline's validator said name: required Aviary has not read the deployed program's instructions yet.");
+  });
+
+  it("credits its own validator, not Pipeline's, when the actions section is what failed", () => {
+    const text = textOf(render(forms({ unavailable: "actions-invalid", errors: ["aviary_actions[0].name: must be an identifier (letters, digits, _)"] })));
+    expect(text).toBe("No forms. Aviary builds a strategy's forms from its metadata, and the actions it describes did not pass the validator. What Aviary's validator of the actions said aviary_actions[0].name: must be an identifier (letters, digits, _) The deployed program has 5 instructions beyond Pipeline's own.");
   });
 
   it("says when valid metadata describes no actions", () => {

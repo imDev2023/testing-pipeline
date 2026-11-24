@@ -2,7 +2,7 @@
 
 import { useId } from "react";
 import type { Form, FormArg } from "terminal-api/contract";
-import { decimalsOf, mintOf } from "@/formValues";
+import { amountDecimals, mintOf } from "@/formValues";
 import { MintFactList } from "../facts/MarketFacts";
 import { MintLabel } from "../MintLabel";
 import { AuthorText } from "../Voice";
@@ -42,9 +42,12 @@ export function FormFields({ form, fields, wallet }: { form: Form; fields: Field
             </div>
             {read?.status === "loading" && <p className={styles.note}>Reading this mint…</p>}
             {read?.status === "failed" && (
-              <p className={styles.note} role="alert">
-                Could not read this mint. {read.message}
-              </p>
+              <div className={styles.control} role="alert">
+                <span className={styles.note}>Could not read this mint. {read.message}</span>
+                <button type="button" onClick={() => fields.retryMint(typed)}>
+                  Read it again
+                </button>
+              </div>
             )}
             {read?.status === "read" &&
               (read.facts.readable ? (
@@ -69,7 +72,7 @@ export function FormFields({ form, fields, wallet }: { form: Form; fields: Field
 function Field({ id, arg, fields, wallet }: { id: string; arg: FormArg; fields: Fields; wallet: string | null }) {
   const reading = fields.readings[arg.name];
   const mint = mintOf(arg.decimals_of, fields.context);
-  const decimals = decimalsOf(arg.decimals_of, fields.context);
+  const decimals = amountDecimals(arg, fields.context);
   const described = arg.description ? `${id}-description` : undefined;
   const label = (
     <span className={styles.fieldLabel}>

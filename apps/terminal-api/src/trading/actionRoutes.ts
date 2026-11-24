@@ -18,7 +18,7 @@ import type { AppEnv } from "../index";
 import { indexer } from "../index";
 import { limitTrades } from "../rateLimits";
 import { keptImages } from "../tokenImages";
-import { actionTransaction, createMarketTransaction, prepareTransaction } from "./action";
+import { actionTransaction, createMarketTransaction, prepareTransaction, walletWrappedSol } from "./action";
 import { awaitTrade, TRANSACTION_WORDS } from "./fastPath";
 import { readMarketOnChain } from "./market";
 import { Refused } from "./quote";
@@ -71,7 +71,7 @@ export function actionRoutes(app: Hono<AppEnv>) {
       if (market.view.strategyProgram !== strategy) throw unprocessable("This market's strategy on chain is not the one Aviary recorded for it.");
       const trader = address(request.trader);
       const tokenPrograms = Object.fromEntries(market.mints.map((m) => [m.address, m.tokenProgram]));
-      const built = await actionTransaction({ action, market: market.view, trader, args: request.args, inputs, tokenPrograms, rpc });
+      const built = await actionTransaction({ action, market: market.view, trader, args: request.args, inputs, tokenPrograms, rpc, walletWrappedSol: await walletWrappedSol(rpc, trader) });
       const prepared = await prepareTransaction(rpc, { instructions: built.instructions, trader, strategy, market: market.address, what: "This action" });
       return c.json(
         PreparedAction.parse({
@@ -111,6 +111,7 @@ export function actionRoutes(app: Hono<AppEnv>) {
         args: request.args,
         inputs,
         rpc,
+        walletWrappedSol: await walletWrappedSol(rpc, trader),
         maxCreatorLamports: CREATE_MARKET_MAX_CREATOR_LAMPORTS,
       });
       const prepared = await prepareTransaction(rpc, { instructions: built.instructions, trader, strategy, market: null, what: "Creating this market" });
@@ -135,9 +136,11 @@ export function actionRoutes(app: Hono<AppEnv>) {
   });
 
   app.post("/v1/transactions", limitTrades, async (c) => {
-    const { signature, strategy } = await bodyOf(c, TransactionSignature);
+    const { signature, market, strategy } = await bodyOf(c, TransactionSignature);
     try {
-      const raw = await awaitTrade(c.env.RPC_URL, signature, { strategy: strategy ?? null, words: TRANSACTION_WORDS });
+      // A failure is decoded against the market's strategy as Aviary recorded it, as the trade fast path does; a new market, which no row names yet, against the strategy the page made it from.
+      const [known] = market ? await withDb(c, (db) => db.select({ strategy: markets.strategyProgram }).from(markets).where(eq(markets.address, market))) : [];
+      const raw = await awaitTrade(c.env.RPC_URL, signature, { strategy: known?.strategy ?? strategy ?? null, words: TRANSACTION_WORDS });
       // The indexer reads it as the live socket's are, so a new market is listed without waiting for reconciliation.
       c.executionCtx.waitUntil(indexer(c.env).fastPath([signature]).catch((e: unknown) => console.error(`handing ${signature} to the indexer failed; reconciliation will index it`, e)));
       return c.json(TransactionReport.parse({ signature, slot: raw.slot }));
@@ -162,11 +165,14 @@ export function actionRoutes(app: Hono<AppEnv>) {
     const [row] = await withDb(c, (db) => db.select({ state: markets.marketState }).from(markets).where(eq(markets.address, market)));
     if (!row) throw new HTTPException(404, { message: "Aviary knows no market created through Pipeline at this address." });
     const wanted = [row.state, ...named].map((a) => address(a));
-    const { context, value } = await createSolanaRpc(c.env.RPC_URL).getMultipleAccounts(wanted, { encoding: "base64", commitment: "confirmed" }).send();
+    // No more of an account is downloaded than the read can return: its first bytes past the cap say it is too large, and its size comes from the RPC.
+    const { context, value } = await createSolanaRpc(c.env.RPC_URL)
+      .getMultipleAccounts(wanted, { encoding: "base64", commitment: "confirmed", dataSlice: { offset: 0, length: MARKET_READ.maxAccountBytes + 1 } })
+      .send();
     const accounts = value.map((account, i) => {
       const base = { address: wanted[i]!, role: i === 0 ? ("market_state" as const) : ("named" as const) };
       if (!account) return { ...base, exists: false, owner: null, lamports: null, executable: null, size: null, data: null };
-      const size = Math.floor((account.data[0].length * 3) / 4) - (account.data[0].endsWith("==") ? 2 : account.data[0].endsWith("=") ? 1 : 0);
+      const size = Number(account.space);
       return { ...base, exists: true, owner: account.owner, lamports: String(account.lamports), executable: account.executable, size, data: size > MARKET_READ.maxAccountBytes ? null : account.data[0] };
     });
     return c.json(MarketRead.parse({ market, slot: Number(context.slot), accounts }));

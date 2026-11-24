@@ -8,7 +8,7 @@
 // above the list.
 import { generateKeyPairSigner, getTransactionDecoder, getTransactionEncoder, partiallySignTransaction, type KeyPairSigner } from "@solana/kit";
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Market, PreparedMarket, StrategiesList, StrategyForms, type Form, type Strategy } from "terminal-api/contract";
 import { getFromApi, postToApi } from "@/api";
@@ -40,11 +40,10 @@ function noCreateForm(strategy: Strategy): string | null {
 export function CreateMarket() {
   const params = useSearchParams();
   const router = useRouter();
-  const pathname = usePathname();
   const chosen = params.get("strategy");
   const load = useCallback((signal: AbortSignal) => getFromApi("/v1/strategies", StrategiesList, { signal }), []);
   const { state, retry } = useLoad(load);
-  const choose = (program: string) => router.replace(`${pathname}?strategy=${encodeURIComponent(program)}`, { scroll: false });
+  const choose = (program: string) => router.replace(ROUTES.createWith(program), { scroll: false });
 
   return (
     <>

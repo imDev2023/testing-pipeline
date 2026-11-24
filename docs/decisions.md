@@ -2583,7 +2583,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### PIPESCOPE-145: SOL around a custom action, and who signs it
 
 - Question: When does Aviary wrap and unwrap SOL around a custom action or a new market, and what may it ask to be signed?
-- Answer: When the instruction writes to the wallet's own wrapped-SOL account, that account is created if missing and the sum of the amount arguments the metadata writes in wrapped SOL moved in before it, and the account is closed back into the wallet after it, in the same transaction; an instruction that needs a signature from anyone but the wallet (and a new market's state) is refused before it is simulated.
+- Answer: When the instruction writes to the wallet's own wrapped-SOL account, the sum of the amount arguments the metadata writes in wrapped SOL is moved into it before the instruction, and an account the wallet did not hold is created first and closed back into the wallet after it, in the same transaction, while one it already held is left as it was; an instruction that needs a signature from anyone but the wallet (and a new market's state) is refused before it is simulated.
 - Alternatives: Leaving wrapped SOL to the user; wrapping for every action that names wrapped SOL anywhere.
 - Specified in: [`docs/spec/pipescope-architecture.md`, Trading path](spec/pipescope-architecture.md#trading-path)
 - Changes by: spec only

@@ -30,7 +30,7 @@ export function SaidBehind({ forms }: { forms: StrategyForms }) {
   if (!forms.errors.length) return null;
   return (
     <details className={styles.disclosure}>
-      <summary>{forms.unavailable === "metadata-unreachable" ? "What fetching the link found" : "What Pipeline's validator said"}</summary>
+      <summary>{forms.unavailable === "metadata-unreachable" ? "What fetching the link found" : forms.unavailable === "actions-invalid" ? `What ${BRAND.name}'s validator of the actions said` : "What Pipeline's validator said"}</summary>
       <ul className={styles.errors}>
         {forms.errors.map((error, i) => (
           <li key={i}>{error}</li>

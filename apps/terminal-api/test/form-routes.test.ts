@@ -137,6 +137,16 @@ describe("GET /v1/markets/{market}/state", () => {
     expect(rpc.requests.filter((r) => r.method === "getMultipleAccounts")).toHaveLength(1);
   });
 
+  it("never downloads more of an account than it returns: a larger one comes back with its size and no data", async () => {
+    const BIG = "Gf8tq5uEsLqAtiWSkxJqUfSMXYKHCct9UeWunLEuWsPe";
+    rpc.accounts.set(BIG, { owner: TAX, data: new Uint8Array(MARKET_READ.maxAccountBytes + 10), lamports: 9_000_000 });
+    rpc.requests.length = 0;
+    const read = MarketRead.parse((await call(`/v1/markets/${MARKET}/state?accounts=${BIG}`)).body);
+    expect(read.accounts[1]).toEqual({ address: BIG, role: "named", exists: true, owner: TAX, lamports: "9000000", executable: false, size: MARKET_READ.maxAccountBytes + 10, data: null });
+    const [asked] = rpc.requests.filter((r) => r.method === "getMultipleAccounts");
+    expect(asked!.params[1]).toMatchObject({ dataSlice: { offset: 0, length: MARKET_READ.maxAccountBytes + 1 } });
+  });
+
   it("reads the market's state alone when no account is named", async () => {
     const read = MarketRead.parse((await call(`/v1/markets/${MARKET}/state`)).body);
     expect(read.accounts.map((a) => a.role)).toEqual(["market_state"]);
