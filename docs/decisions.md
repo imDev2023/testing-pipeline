@@ -5204,7 +5204,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### POOL4-58: What the panel reads and how it reads it
 
 - Question: Where does the buy wall panel read each value, and how fresh is it?
-- Answer: From the market state and the token's mint, read in one request at one slot through the API and decoded at the spec's offsets by the program's generated client in one module the explainer shares; read again every 30 seconds while the page is in view, 1.5 seconds after a burst of the market's trades and after each of its own transactions (`BUY_WALL_REFRESH_MS`, `BUY_WALL_TRADE_PAUSE_MS`); the allowance is brought up to the page's clock, and the tokens burned are a share of the mint's supply plus the tokens burned.
+- Answer: From the market state, the token's mint and the Clock sysvar, read in one request at one slot through the API and decoded at the spec's offsets by the program's generated client in one module the explainer shares; read again every 30 seconds while the page is in view, 1.5 seconds after a burst of the market's trades and after each of its own transactions (`BUY_WALL_REFRESH_MS`, `BUY_WALL_TRADE_PAUSE_MS`); the allowance is brought up to the chain's Clock read with them, and the tokens burned are a share of the mint's supply plus the tokens burned.
 - Alternatives: Pipeline's API and the vault balances, which count retired tokens, the wall, idle SOL and unpaid fees as liquidity; the market's events; reading only on load.
 - Specified in: [`docs/spec/pool4-for-solana.md`, Aviary's panel](spec/pool4-for-solana.md#aviarys-panel)
 - Changes by: build-time constant
