@@ -31,13 +31,13 @@ export function Payout({ market, slot, taxMint, onPaid }: { market: Market; slot
   const verb = slot.action === "burn" ? "Burn" : "Pay out";
   const named = `${verb} ${partName(slot).replace(/^The /, "the ").replace(/^Tax/, "tax")}`;
 
+  if (slot.owed === 0n && !review) return <p className={forms.note}>Owed nothing now.</p>;
   if (!open || !review) {
     return (
       <div className={styles.payoutActions}>
         {account ? (
           <button
             type="button"
-            disabled={slot.owed === 0n}
             aria-label={named}
             onClick={() => {
               setOpen(true);
@@ -51,8 +51,7 @@ export function Payout({ market, slot, taxMint, onPaid }: { market: Market; slot
             Connect wallet
           </button>
         )}
-        {slot.owed === 0n && <span className={forms.note}>Owed nothing now.</span>}
-        {slot.owed > 0n && slot.action === "distribute" && taxMint && <span className={forms.note}>Paid to its wallet&apos;s {taxMint.symbol === "SOL" ? "wrapped-SOL" : `${taxMint.symbol ?? taxMint.token?.symbol ?? "token"}`} account, which the payout creates if it is missing.</span>}
+        {slot.action === "distribute" && taxMint && <span className={forms.note}>Paid to its wallet&apos;s {taxMint.symbol === "SOL" ? "wrapped-SOL" : `${taxMint.symbol ?? taxMint.token?.symbol ?? "token"}`} account, which the payout creates if it is missing.</span>}
       </div>
     );
   }

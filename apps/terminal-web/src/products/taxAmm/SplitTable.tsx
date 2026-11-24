@@ -28,7 +28,8 @@ export function SplitTable({ split, caption }: { split: SplitPart[]; caption: st
         key: `${part.who}-${part.slot}`,
         cells: {
           part: partName(part),
-          wallet: part.who === "burn" ? "Burned, so nobody" : part.who === "suite" ? <>The suite&apos;s treasury, <ShortAddress address={part.wallet!} /></> : <ShortAddress address={part.wallet!} />,
+          // One element a cell: at narrow widths a cell is a grid, which would set each loose part on a line of its own.
+          wallet: part.who === "burn" ? "Burned, so nobody" : part.who === "suite" ? <span>The suite&apos;s treasury, <ShortAddress address={part.wallet!} /></span> : <ShortAddress address={part.wallet!} />,
           creator: part.ofCreatorBps === null ? "Taken first" : percent(part.ofCreatorBps),
           tax: percent(part.ofTaxBps),
         },

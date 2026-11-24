@@ -142,7 +142,8 @@ const taxLaunchFilled = async (page: Page) => {
   await launch.getByLabel("Tax recipient 2's share, in percent").fill("40");
   await launch.getByLabel(/^Amount of /).first().fill("100000");
   await launch.getByLabel("Amount of SOL").fill("0.5");
-  await expect(launch.getByRole("table", { name: "The whole split of every tax, before you sign" }).getByRole("row")).toHaveCount(4);
+  // The suite share and the two recipients; at narrow widths the table's head is hidden, so only rows with cells count.
+  await expect(launch.getByRole("table", { name: "The whole split of every tax, before you sign" }).getByRole("row").filter({ has: page.getByRole("cell") })).toHaveCount(3);
   await expect(launch.getByRole("button", { name: "Simulate the launch" })).toBeEnabled();
 };
 

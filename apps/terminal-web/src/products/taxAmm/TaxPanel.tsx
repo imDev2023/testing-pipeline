@@ -171,7 +171,7 @@ export function TaxPanelBody({ market, view, slot, keeper, vaultsRead, onPaid }:
                   <span className={styles.lines}>{view.vaults.map((v, i) => <span key={i}>{v === null ? "Not read" : amount(v, mints[i] ?? null)}</span>)}</span>
                   <span className={styles.sub}>
                     {view.owedTotal > 0n ? <>Of what the {taxName} vault holds, {amount(view.owedTotal, taxMint ?? null)} is tax owed and not yet paid out. </> : null}
-                    Anything sent to a vault outside a trade stays there too, so {BRAND.name}&apos;s liquidity for this market is its real reserves.
+                    Anything sent to a vault outside a trade stays there{view.owedTotal > 0n ? " too" : ""}, so {BRAND.name}&apos;s liquidity for this market is its real reserves.
                   </span>
                 </>
               ),

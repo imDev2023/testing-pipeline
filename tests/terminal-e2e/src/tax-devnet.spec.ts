@@ -268,7 +268,9 @@ test.describe("the tax AMM in Aviary on devnet", () => {
       await panel(page).getByRole("button", { name: `Pay out ${name}` }).click();
       paid[name] = await signReview(panel(page).getByRole("region", { name: `Review: pay out ${name}` }));
       await panel(page).getByRole("region", { name: `Review: pay out ${name}` }).getByRole("button", { name: "Done" }).click();
-      await expect(panel(page).getByRole("button", { name: `Pay out ${name}` })).toBeDisabled();
+      // Owed nothing once paid: the slot says so, with no button.
+      await expect(panel(page).getByRole("button", { name: `Pay out ${name}` })).toHaveCount(0);
+      await expect(panel(page).getByRole("listitem").filter({ hasText: new RegExp(`^${name.replace(/^t/, "T")}`) }).getByText("Owed nothing now.")).toBeVisible();
     }
     record.payouts = paid;
     save();
