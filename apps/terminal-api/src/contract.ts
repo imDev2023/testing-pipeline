@@ -1075,3 +1075,60 @@ export const CanaryRerunPayload = z
 export type CanaryRerunPayload = z.infer<typeof CanaryRerunPayload>;
 export const CANARY_RERUN_DOMAIN = "canary-rerun/v1";
 export const canaryRerunMessage = (payload: string): Uint8Array => new TextEncoder().encode(`${CANARY_RERUN_DOMAIN}\n${payload}`);
+
+// ---- The explanation (#127) ----
+
+/** A sentence an AI wrote, with the ids of the evidence it cites: model text, which a page renders only as plain text. */
+export const ExplanationSentence = z.object({ text: z.string(), evidence: z.array(z.string()) });
+export type ExplanationSentence = z.infer<typeof ExplanationSentence>;
+
+/** A point of the full explanation: its topic, which groups it on the page, and its basis (the evidence, an inference from it, or author text). */
+export const ExplanationClaim = ExplanationSentence.extend({
+  topic: z.enum(["does", "control", "canary", "protection", "author"]),
+  basis: z.enum(["confirmed", "inferred", "author"]),
+});
+export type ExplanationClaim = z.infer<typeof ExplanationClaim>;
+
+/** One item of the evidence the explanation was given, as the model read it, with where Aviary read it; `author` marks author text (an A item). */
+export const ExplanationEvidence = z.object({ id: z.string(), label: z.string(), value: z.string(), source: z.string(), author: z.boolean() });
+export type ExplanationEvidence = z.infer<typeof ExplanationEvidence>;
+
+/**
+ * `GET /v1/strategies/{program}/explanation` (docs/spec/pipescope-explainer.md, Presentation;
+ * EXPLAINER-15, EXPLAINER-16, EXPLAINER-20): the explanation of the strategy's current version, only
+ * for the key that version has now and only once the owner's approve command wrote it, else null;
+ * and the fixed notice about author text addressed to AI tools (EXPLAINER-14), shown whether or not
+ * an explanation is. `label` is the code-written line above the text, written once here so the pages
+ * and the Telegram bot say the same.
+ */
+export const StrategyExplanation = z.object({
+  program: Address,
+  /** The current version's deploy slot, or null before the ProgramData watch has read one. */
+  deploy_slot: z.number().int().nullable(),
+  ai_notice: z.string().nullable(),
+  explanation: z
+    .object({
+      key: z.string(),
+      deploy_slot: z.number().int(),
+      written_at: Time,
+      label: z.string(),
+      summary: z.array(ExplanationSentence),
+      claims: z.array(ExplanationClaim),
+      unknowns: z.array(ExplanationSentence),
+      evidence: z.array(ExplanationEvidence),
+    })
+    .nullable(),
+});
+export type StrategyExplanation = z.infer<typeof StrategyExplanation>;
+
+/**
+ * `POST /v1/explanations/{key}/reports`: "This is wrong", with what the reader says is wrong, if
+ * anything. The route refuses a note past REPORT_NOTE_MAX characters (./config); the contract
+ * imports nothing, since other packages type-check it on its own.
+ */
+export const ExplanationReport = z.object({ note: z.string().optional() }).strict();
+export type ExplanationReport = z.infer<typeof ExplanationReport>;
+
+/** The answer to a report: its id, and the key it was filed against. */
+export const ExplanationReportReceived = z.object({ id: z.string(), key: z.string() });
+export type ExplanationReportReceived = z.infer<typeof ExplanationReportReceived>;

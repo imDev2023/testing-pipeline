@@ -43,11 +43,12 @@ describe("the product panels' registry", () => {
     expect(Object.keys(PRODUCT_PANELS)).toEqual(["Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG"]);
   });
 
-  it("puts a registered product's panel before the forms, and its forms under Actions, on its program's markets", () => {
+  it("puts a registered product's panel before the explanation and the forms, and its forms under Actions, on its program's markets", () => {
     const html = renderToStaticMarkup(<MarketLowBand market={market(TEST_PROGRAM, "4oPAw2WtnusKZxW8aprTc1Ldk3MyhiQdBeRFmfGhFJ9c")} registry={registry} facts={facts} />);
-    const [panel, actions, form, factsAt] = ["Test product panel for 4oPAw2WtnusKZxW8aprTc1Ldk3MyhiQdBeRFmfGhFJ9c", ">Actions<", "Test product form", "The facts panel"].map((text) => html.indexOf(text)) as [number, number, number, number];
+    const [panel, explanation, actions, form, factsAt] = ["Test product panel for 4oPAw2WtnusKZxW8aprTc1Ldk3MyhiQdBeRFmfGhFJ9c", ">Explanation<", ">Actions<", "Test product form", "The facts panel"].map((text) => html.indexOf(text)) as [number, number, number, number, number];
     expect(panel).toBeGreaterThan(-1);
-    expect(panel).toBeLessThan(actions);
+    expect(panel).toBeLessThan(explanation);
+    expect(explanation).toBeLessThan(actions);
     expect(form).toBeGreaterThan(actions);
     expect(form).toBeLessThan(factsAt);
   });

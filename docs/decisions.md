@@ -2710,7 +2710,47 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Aviary: hooked mints, markets of three or four mints, and the wallet page](https://github.com/imDev2023/testing-pipeline/issues/122)
 
-### PIPESCOPE-158: A product's forms in place of the metadata's
+### PIPESCOPE-158: Where an evidence chip points
+
+- Question: Which fact row does an explanation's evidence chip highlight?
+- Answer: A row of the evidence the explanation was given, listed under it in a closed disclosure, "The evidence it was given (N items)", each row its id, what it is, its value as the model read it and where Aviary read it; a chip opens the list, marks that row, brings it into view and moves the focus to it.
+- Alternatives: A row of the live facts panel, which describes the chain as it is now rather than as the model read it, gives its rows no evidence ids, and has no rows for Pipeline's rules, Canary's roll-up or the author text.
+- Specified in: [`docs/spec/pipescope-explainer.md`, Presentation](spec/pipescope-explainer.md#presentation)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: the explanation on the strategy and market pages](https://github.com/imDev2023/testing-pipeline/issues/127)
+
+### PIPESCOPE-159: Which explanation a page shows
+
+- Question: Which explanation does a strategy page or a market page show, and when does the notice about text addressed to AI tools show?
+- Answer: The explanation of the key the strategy's current version has at the moment the page is read, worked out as the `explainerKeys` job works it out, once the approve command wrote it, and then the upgrade notice says only "tests for this version are pending"; otherwise "No explanation for this version yet.", and the notice about text addressed to AI tools whenever Aviary's detector finds such text in the current metadata or the shown explanation's own flag is set.
+- Alternatives: The newest explanation recorded for the strategy, which would keep showing one written before its author text or its Canary outcomes changed.
+- Specified in: [`docs/spec/pipescope-explainer.md`, Presentation](spec/pipescope-explainer.md#presentation)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: the explanation on the strategy and market pages](https://github.com/imDev2023/testing-pipeline/issues/127)
+
+### PIPESCOPE-160: A "This is wrong" report
+
+- Question: What does a "This is wrong" report carry, and what can be reported?
+- Answer: A report is `POST /v1/explanations/{key}/reports` against any key that has an explanation, with an optional note of up to 600 characters (`REPORT_NOTE_MAX` in the API's config module), counted against the 10 reports a minute per address of `PIPESCOPE-90`; `pnpm explainer:reports` lists it with its key, the strategy version and the note.
+- Alternatives: A report with no note; reports only against the version's current key, which would refuse a reader whose page was open while the key changed.
+- Specified in: [`docs/spec/pipescope-explainer.md`, Presentation](spec/pipescope-explainer.md#presentation)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: the explanation on the strategy and market pages](https://github.com/imDev2023/testing-pipeline/issues/127)
+
+### PIPESCOPE-161: How the explanation is set beside the facts
+
+- Question: How is the explanation laid out beside the facts, and how is a point marked by its basis?
+- Answer: On the strategy page the explanation sits beside the facts above 1080 px and above them at 1080 px and narrower, as on the market page; a point stated by the evidence has a solid bullet, an inferred one a hollow bullet and the word "inferred", and an author point a bullet and a sentence in the author's colour, upright since only Literata's upright face is served, with "the author's words" beside it, under a key to the three bullets.
+- Alternatives: The facts above the explanation on phones; author points in italic, which the browser would have to fake.
+- Specified in: [`docs/spec/pipescope-screens.md`, Strategy page](spec/pipescope-screens.md#strategy-page)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Aviary: the explanation on the strategy and market pages](https://github.com/imDev2023/testing-pipeline/issues/127)
+
+### PIPESCOPE-162: A product's forms in place of the metadata's
 
 - Question: May one of our products' own forms stand in for the strategy's metadata forms and its create form?
 - Answer: Yes: a product names the metadata forms its own fill in (`replaces` in `apps/terminal-web/src/products/registry.ts`), which Actions then leaves out, and may give its own create form (`Create`), which the create-market page shows in place of the metadata's.
@@ -2720,7 +2760,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Lending AMM: Aviary panel, forms and explainer facts](https://github.com/imDev2023/testing-pipeline/issues/88)
 
-### PIPESCOPE-159: Strategy-program events
+### PIPESCOPE-163: Strategy-program events
 
 - Question: Does the indexer keep the events strategy programs log, and in what form?
 - Answer: Yes: every `Program data:` line a strategy program writes itself in a successful transaction, whole, in `strategy_events` with the 32 bytes after its discriminator as its subject, for products to decode their own; the live path stores strategy calls and events as reconciliation does.
@@ -6305,7 +6345,7 @@ Open on 2026-11-10; the session that settles each one adds its blocks above.
 Places where a spec disagrees with a later answer, spreads one value over several places, or fixes in prose something that should be one named value.
 They are listed here for the sessions that own those specs, not fixed in this file's PR.
 
-- `LENDING-104` to `LENDING-112`, `PIPESCOPE-158` and `PIPESCOPE-159`: set by the session of [Lending AMM: Aviary panel, forms and explainer facts](https://github.com/imDev2023/testing-pipeline/issues/88) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
+- `LENDING-104` to `LENDING-112`, `PIPESCOPE-162` and `PIPESCOPE-163`: set by the session of [Lending AMM: Aviary panel, forms and explainer facts](https://github.com/imDev2023/testing-pipeline/issues/88) while building, and not yet put to the owner, so they are that session's defaults until the owner has been asked.
 - `LENDING-19`: the owner approved burning LP shares as the way to make liquidity protocol-owned; the spec adds `lock_lp` for that and has a burn hand its value to the remaining LPs, a refinement the owner was not asked about.
 - `BAR-18`, `BAR-27`, `POOL4-19`, `LENDING-34`: `README.md` makes the hardening ticket each program's last build ticket, and the owner's answer for the tax AMM and the containment hook puts it after the deploy; the buy wall AMM and the lending AMM harden before their first deploy, a choice of their sessions.
   One order belongs in `README.md`, with a product's departure and its reason in that product's file.

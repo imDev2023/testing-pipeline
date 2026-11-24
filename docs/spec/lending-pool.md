@@ -472,7 +472,7 @@ How it is built ([Lending AMM: Aviary panel, forms and explainer facts](https://
 - SOL is wrapped around a deposit and unwrapped after a cash removal in the same transaction when the wallet holds no wrapped-SOL account of its own; one it holds keeps what the removal pays, as for every custom action (`PIPESCOPE-145`, LENDING-110).
 - The create form on the create-market page builds the router's `create_market` from the metadata's `init`, both `init_fee_account` calls and the first `add_liquidity` in one transaction; its defaults, an LP fee of 30 bps and `lent_index` 1, are in `terminal-api`'s config module (`LENDING_AMM.create`) and reach the page through `GET /v1/lending-amm/create` (LENDING-104).
   A hooked token's deposit carries its hook's accounts; on 2026-11-24 a market of a token our containment hook binds fitted a legacy transaction.
-- The market's history is a second panel under the panel, the strategy's own events on the market newest first, 25 a page, from the indexer's `strategy_events` (`PIPESCOPE-159`, LENDING-111).
+- The market's history is a second panel under the panel, the strategy's own events on the market newest first, 25 a page, from the indexer's `strategy_events` (`PIPESCOPE-163`, LENDING-111).
 - The explainer's evidence for a lending AMM version adds the sampled market's panel facts, read when its key is made, and the three risks above, as F items written by `src/products/lendingAmm/facts.ts` (LENDING-112).
 
 ## Upgrades and freezing
