@@ -82,7 +82,7 @@ impl Row {
             // The rule's 60,000 since Pipeline 0.4's `test-hook`; kept there before it, above the
             // rule's 55,000, since on random keys the hooked first deposit measured up to 55,635
             // (see `fixed_key`).
-            Row::AddLiquidity => (45_434, 60_000),
+            Row::AddLiquidity => (45_440, 60_000),
             Row::Rebalance => (70_854, 90_000),
             Row::RemoveLiquidityCash => (80_668, 105_000),
             Row::RemoveLiquidityInKind => (67_385, 85_000),
