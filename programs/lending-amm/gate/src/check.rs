@@ -478,18 +478,6 @@ fn check_market(session: &mut Session, market_state: &Pubkey, mode: &Mode, steps
         Err(error) => return steps.fail(StepKind::ReadState, "read the market state", error),
     };
 
-    // A market the router recorded before Pipeline 0.3's fee mints can't be traded until it is
-    // migrated; anyone may migrate it, so the gate does.
-    if recorded_before_fee_mints(session, market_state) {
-        let result = migrate(session, market_state);
-        steps.record(
-            StepKind::Migrate,
-            "migrate_market (as anyone could)",
-            result,
-            |d| d,
-        );
-    }
-
     // A market the router never recorded is registered as anyone could, so it is checked like
     // the rest; if even that fails, every step that needs no router still runs.
     let mut registered = session.market(market_state).is_ok();
@@ -832,25 +820,6 @@ fn market_info(session: &Session, view: &MarketView) -> Result<String, String> {
         ));
     }
     Ok("the mints and vaults the router records".into())
-}
-
-/// A router `Market` account's length before Pipeline 0.3 appended `fee_mint_index`.
-const MARKET_LEN_BEFORE_FEE_MINTS: usize = 8 + 364;
-
-fn recorded_before_fee_mints(session: &Session, market_state: &Pubkey) -> bool {
-    let market = pda::market(&session.program, market_state);
-    session.svm.get_account(&market).is_some_and(|account| {
-        account.owner == client::PROGRAM_ID
-            && account.data.len() == MARKET_LEN_BEFORE_FEE_MINTS
-            && account.data[..8] == client::account_discriminator("Market")
-    })
-}
-
-fn migrate(session: &mut Session, market_state: &Pubkey) -> Result<String, String> {
-    let market = pda::market(&session.program, market_state);
-    let payer = session.payer.pubkey();
-    session.send(&[client::migrate_market(&payer, &market)], &[])?;
-    Ok("moved to the router's current Market layout with migrate_market".into())
 }
 
 /// Registers a market the router has no Market for, as anyone may: the router's

@@ -319,10 +319,7 @@ impl SwapPath for DirectToStrategy {
         // The router refuses any swap that leaves the trader with less of the output mint
         // than before, whatever its minimum (Pipeline 3fd85ce, `OutputDecreased`).
         if output_after < output_before {
-            return undo(
-                svm,
-                router_refused("OutputDecreased: the trader's output balance fell during the swap"),
-            );
+            return undo(svm, router_refused(OUTPUT_DECREASED));
         }
         let fee_on_output = FeeSide::of(&market.record, &market.mint(output)) == FeeSide::Output;
         let settle = if fee_on_output {
@@ -383,6 +380,26 @@ impl SwapPath for DirectToStrategy {
                 Err(failure) => return undo(svm, failure),
             }
         }
+        // The fee transfer runs a transfer hook after the swap was measured; since Pipeline
+        // 0.4.0 the router reads the output again and refuses the swap when it lost more than
+        // the fee charged in it (`OutputDecreased`).
+        let output_end = match checked_balance(
+            &|key: &Pubkey| svm.get_account(key),
+            &trader_output,
+            &market.mint(output),
+            &market.token_program(output),
+        ) {
+            Ok(balance) => balance,
+            Err(failure) => return undo(svm, failure),
+        };
+        let output_fee = if fee_on_output {
+            settled.pipeline_fee
+        } else {
+            0
+        };
+        if output_end < output_after.saturating_sub(output_fee) {
+            return undo(svm, router_refused(OUTPUT_DECREASED));
+        }
         Ok(SwapReceipt {
             trader_spent: input_before
                 .saturating_sub(token_amount(svm, &trader_input).unwrap_or(0)),
@@ -398,6 +415,12 @@ impl SwapPath for DirectToStrategy {
         })
     }
 }
+
+/// The router's refusal of a swap that leaves the trader with less of the output mint than
+/// before (Pipeline 3fd85ce), or, after its fee transfers, with less than that minus a fee
+/// charged in it (Pipeline 0.4.0), in its own words.
+const OUTPUT_DECREASED: &str =
+    "OutputDecreased: the trader's output balance fell during the swap or its fee transfers";
 
 /// Pays for the strategy's call in the direct path, so the trader, who signs only its own
 /// transfer, is never a signer of the transaction the strategy runs in: in a transaction the

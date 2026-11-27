@@ -13,14 +13,13 @@ license = "Apache-2.0"
 repository = "https://github.com/imDev2023/testing-pipeline"
 
 # The one place the terminal's Rust pins Pipeline (PIPESCOPE-87): its Apache-2.0 crates from
-# crates.io at exact versions, the newest release (0.3.0, 2026-11-21, Pipeline's `48a6b5f`, for the
-# router with fee mints, `route` and lookup tables that devnet runs; `pipeline-strategy-interface`
-# 0.1.1, additive).
+# crates.io at exact versions, the newest release (0.4.0, 2026-11-25, Pipeline's `b1e6b6b`, for the
+# router as frozen for audit that devnet runs; `pipeline-strategy-interface` 0.1.1, unchanged).
 # A move to a newer release is a PR of its own that moves these together.
 [workspace.dependencies]
-pipeline-check = "=0.3.0"
-pipeline-client = "=0.3.0"
-pipeline-quoter = "=0.3.0"
+pipeline-check = "=0.4.0"
+pipeline-client = "=0.4.0"
+pipeline-quoter = "=0.4.0"
 pipeline-strategy-interface = "=0.1.1"
 # The local Solana VM, at the version pipeline-quoter and pipeline-check pin.
 litesvm = "=0.18.2"
