@@ -21,6 +21,7 @@
         "@solana/react": "8.6.0",
         "@wallet-standard/react": "1.0.3",
         "lightweight-charts": "5.3.0",
+        "containment-hook-scripts": "workspace:*",
         "next": "16.4.6",
         "react": "19.3.1",
         "react-dom": "19.3.1",

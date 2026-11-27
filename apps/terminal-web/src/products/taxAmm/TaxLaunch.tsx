@@ -6,7 +6,8 @@
 // authority; the tax recipients, the burn and the seed. The whole split shows before signing, the suite
 // share first. It builds `create_market`, both `init_fee_account` instructions and the seed as one
 // transaction (PIPESCOPE-166), simulated before the wallet signs like every transaction Aviary builds,
-// and a mint the program's mint rules refuse is refused there, with the rule it breaks.
+// and a mint the program's mint rules refuse is refused there, with the rule it breaks. A contained
+// token's mint, whose transfer hook is the containment hook, is refused before any signature (#76).
 import { address, generateKeyPairSigner, getTransactionDecoder, getTransactionEncoder, isAddress, partiallySignTransaction, type Address, type KeyPairSigner } from "@solana/kit";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { AVIARY_MINT_NAMES, CLUSTER_USDC, WRAPPED_SOL } from "terminal-api/config";
@@ -22,6 +23,7 @@ import { useReview } from "@/components/forms/useReview";
 import { StaticPanel } from "@/components/Panel";
 import { useWallet } from "@/components/wallet/WalletProvider";
 import { launchRequest, MAX_RECIPIENTS, readLaunch, type LaunchValues } from "./launch";
+import { containedLaunchRefusal } from "../containment/view";
 import { mintRuleRefusal } from "./refusal";
 import { SplitTable } from "./SplitTable";
 import styles from "./TaxAmm.module.css";
@@ -80,7 +82,9 @@ export function TaxLaunch({ program }: { program: string }) {
   const tokenName = tokenSymbol ?? "the token";
   const taxName = values.taxedIn === "quote" ? quote.name : tokenName;
 
-  const tokenProblem = read?.status === "failed" ? "Could not read the token's mint: read it again." : read?.status === "read" && (!read.facts.readable || read.facts.decimals === null) ? "The token's address is no mint." : null;
+  // A contained token's mint is refused here, before any signature (docs/spec/containment-hook.md, "Launch in v1"; #76).
+  const contained = tokenFacts ? containedLaunchRefusal(tokenFacts) : null;
+  const tokenProblem = read?.status === "failed" ? "Could not read the token's mint: read it again." : read?.status === "read" && (!read.facts.readable || read.facts.decimals === null) ? "The token's address is no mint." : contained;
   const { launch, missing } = readLaunch(values, { wallet: trader, token: tokenFacts && tokenFacts.decimals !== null ? { mint: address(tokenFacts.mint), decimals: tokenFacts.decimals } : null, tokenProblem, quotes: QUOTES });
 
   // A new market state's keypair, made in the page for each review and never sent anywhere (PIPESCOPE-144).
@@ -130,9 +134,16 @@ export function TaxLaunch({ program }: { program: string }) {
             )}
             {read?.status === "read" &&
               (read.facts.readable ? (
-                <div className={forms.facts} aria-label="The token's facts">
-                  <MintFactList mint={read.facts} />
-                </div>
+                <>
+                  <div className={forms.facts} aria-label="The token's facts">
+                    <MintFactList mint={read.facts} />
+                  </div>
+                  {contained && (
+                    <p className={forms.reason} role="alert">
+                      {contained}
+                    </p>
+                  )}
+                </>
               ) : (
                 <p className={forms.reason} role="alert">
                   This address is no mint.

@@ -114,3 +114,10 @@ export const TAX_LAUNCH_DEFAULTS = {
 
 /** How long a slot lasts, about, for the time a pending change of a tax market's rates has left (devnet's 400 ms). */
 export const SLOT_MS_ESTIMATE = 400;
+
+/**
+ * The containment panel (#76): how often it reads a contained token's home market again while the page
+ * is open, so the tax collected follows the trades and the Unlock button appears once the goal is
+ * reached; it also reads again a second after the deadline passes.
+ */
+export const CONTAINMENT_REFRESH_MS = 30_000;

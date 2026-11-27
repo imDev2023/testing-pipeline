@@ -11,7 +11,7 @@ import { StrategyName } from "@/components/StrategyName";
 import { MintLabel } from "@/components/MintLabel";
 import { formatDate, shortAddress } from "@/format";
 import { ROUTES } from "@/routes";
-import { readMarket, readMarketCanary, readStrategyExplanation } from "@/serverReads";
+import { readMarket, readMarketCanary, readMarketContainment, readStrategyExplanation } from "@/serverReads";
 import { StrandedHead, UpgradeNotice, type CanaryRead } from "@/components/canary/MarketCanary";
 import type { Market, MarketMint } from "terminal-api/contract";
 
@@ -46,7 +46,7 @@ export default async function MarketPage({ params }: Props) {
     );
   }
   const value = read.value;
-  const explanation = await readStrategyExplanation(value.strategy);
+  const [explanation, containment] = await Promise.all([readStrategyExplanation(value.strategy), readMarketContainment(value.address, value.strategy)]);
   const mint = (address: string) => value.mints.find((m) => m.mint === address)!;
   const base = mint(value.base_mint);
   const quote = mint(value.quote_mint);
@@ -56,10 +56,10 @@ export default async function MarketPage({ params }: Props) {
       <div className={`${bands.top} ${bands.withTrade}`}>
         {/* The chart's length and Flip are read from the page's address. */}
         <Suspense fallback={null}>
-          <MarketLive market={value} canary={canary} />
+          <MarketLive market={value} canary={canary} containment={containment?.ok ? containment.value : null} />
         </Suspense>
       </div>
-      <MarketLowBand market={value} explanation={explanation} facts={<MarketFacts market={value.address} canary={canary} />} />
+      <MarketLowBand market={value} explanation={explanation} containment={containment} facts={<MarketFacts market={value.address} canary={canary} />} />
     </div>
   );
 }

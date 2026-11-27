@@ -1,0 +1,91 @@
+/* The containment panel (docs/spec/containment-hook.md, "In Aviary"): set plainly, as Aviary's own
+   reading of the chain, in the theme's colours and typefaces; nothing is green or red. The bar is
+   drawn as Canary's are, a hairline track filled in the page's ink. */
+.panel {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.state {
+  margin: 0;
+  max-width: 70ch;
+}
+
+.label {
+  font-family: var(--font-sans);
+  font-stretch: var(--heading-stretch);
+  font-weight: var(--heading-weight);
+  margin-right: 0.35em;
+}
+
+.goal {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.track {
+  display: block;
+  height: 10px;
+  max-width: 24em;
+  border: 1px solid var(--rule2);
+}
+
+.fill {
+  display: block;
+  height: 100%;
+  background: var(--ink);
+}
+
+.due {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--rule2);
+  background: var(--sheet);
+}
+
+.due p {
+  margin: 0;
+  max-width: 70ch;
+}
+
+.unlockActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+
+.recipients {
+  display: inline;
+}
+
+.warning {
+  display: grid;
+  gap: 4px;
+  padding: 10px 14px;
+  border-left: 3px solid var(--ink);
+}
+
+.warning p {
+  margin: 0;
+  max-width: 70ch;
+}
+
+.notes {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 1.2em;
+  color: var(--ink2);
+  max-width: 70ch;
+}
+
+.note {
+  margin: 0;
+  color: var(--ink3);
+  max-width: 70ch;
+}

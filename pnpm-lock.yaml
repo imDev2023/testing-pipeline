@@ -212,6 +212,9 @@ importers:
       '@wallet-standard/react':
         specifier: 1.0.3
         version: 1.0.3(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      containment-hook-scripts:
+        specifier: workspace:*
+        version: link:../../programs/containment-hook/scripts
       lightweight-charts:
         specifier: 5.3.0
         version: 5.3.0
