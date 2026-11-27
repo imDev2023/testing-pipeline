@@ -19,7 +19,7 @@ import type { AppEnv } from "../index";
 import { indexer } from "../index";
 import { limitTrades } from "../rateLimits";
 import { keptImages } from "../tokenImages";
-import { actionTransaction, createMarketTransaction, prepareTransaction, walletWrappedSol, type Opening } from "./action";
+import { actionTransaction, createAndSeedTransaction, createMarketTransaction, newMarketView, prepareTransaction, walletWrappedSol, type Opening } from "./action";
 import { awaitTrade, TRANSACTION_WORDS } from "./fastPath";
 import { actionHookAccounts } from "./hooks";
 import { readMarketOnChain, transferHookProgram } from "./market";
@@ -51,6 +51,15 @@ const accountsOf = (instruction: Instruction) =>
   }));
 
 const unprocessable = (message: string) => new HTTPException(422, { message });
+
+/** The strategy's add_liquidity action named to seed a new market, from its validated metadata actions. */
+function seedActionOf(source: NonNullable<Awaited<ReturnType<typeof readFormSource>>>, name: string) {
+  if (!source.actions?.result.ok) throw unprocessable("This strategy's metadata describes no valid actions, so no seed can be sent with a new market.");
+  const action = source.actions.result.actions.find((a) => a.name === name);
+  if (!action) throw new HTTPException(404, { message: `This strategy describes no action named ${name} in its metadata.` });
+  if (action.kind !== "add_liquidity") throw unprocessable(`${name} is not a seed: only an add_liquidity action can be sent with a new market.`);
+  return action;
+}
 
 /**
  * A new market's opening with each action found by name in the strategy's validated metadata, or
@@ -151,10 +160,16 @@ export function actionRoutes(app: Hono<AppEnv>) {
     if (!source) throw new HTTPException(404, { message: "Aviary knows no strategy registered with Pipeline at this address." });
     if (!source.document) throw unprocessable("This strategy has no create form: its metadata is unavailable.");
     if (!source.init) throw unprocessable("This strategy has no create form: its metadata describes none.");
+    if (request.then && request.seed) throw unprocessable("A new market either opens with the actions in then or is seeded by seed; send one of them.");
     // The actions a new market runs as it opens, from the strategy's validated metadata like any action form's.
     const then = request.then && (await openingOf(request.then, source));
 
+    // A seed sent with the new market is the strategy's own add_liquidity action, from its validated actions.
+    const seedAction = request.seed ? seedActionOf(source, request.seed.action) : null;
+    const seedInputs = request.seed ? checkedInputs(request.seed.inputs) : {};
+
     const rpc = createSolanaRpc(c.env.RPC_URL);
+    const aviaryTable = aviaryTableOf(c.env);
     if (then) await refuseHookedOpening(rpc, then.mints);
     try {
       const trader = address(request.trader);
@@ -171,21 +186,36 @@ export function actionRoutes(app: Hono<AppEnv>) {
         walletWrappedSol: await walletWrappedSol(rpc, trader),
         maxCreatorLamports: CREATE_MARKET_MAX_CREATOR_LAMPORTS,
       });
-      const prepared = await prepareTransaction(rpc, { instructions: built.instructions, trader, strategy, market: null, what: "Creating this market", aviaryTable: aviaryTableOf(c.env) });
       const create = built.instructions.find((i) => i.programAddress === PIPELINE_PROGRAM_ADDRESS)!;
-      return c.json(
-        PreparedMarket.parse({
-          strategy,
-          market: built.market,
-          market_state: built.marketState,
-          market_state_signs: built.marketStateSigns,
-          check: checkForm(await initDiscriminator(), source.list),
-          accounts: accountsOf(create),
-          wrapped_sol: String(built.wrapped),
-          max_creator_lamports: String(CREATE_MARKET_MAX_CREATOR_LAMPORTS),
-          ...prepared,
-        }),
-      );
+      const check = checkForm(await initDiscriminator(), source.list);
+      const marketBase = () => ({
+        strategy,
+        market: built.market,
+        market_state: built.marketState,
+        market_state_signs: built.marketStateSigns,
+        check,
+        accounts: accountsOf(create),
+        wrapped_sol: String(built.wrapped),
+        max_creator_lamports: String(CREATE_MARKET_MAX_CREATOR_LAMPORTS),
+      });
+      let instructions = built.instructions;
+      let seeded: { wrapped: bigint; seed: PreparedMarket["seed"]; hooks: string[] } | null = null;
+      if (seedAction && request.seed) {
+        const seedCheck = checkForm(await actionDiscriminator(seedAction), source.list);
+        // The market the seed is built on, as create_market leaves it: simulated alone first, its failure the answer when it fails.
+        const alone = await newMarketView(rpc, { instructions: built.instructions, trader, market: built.market, strategy, aviaryTable });
+        if (!alone.ok) {
+          return c.json(PreparedMarket.parse({ ...marketBase(), seed: { action: seedAction.name, check: seedCheck, accounts: [] }, transaction: null, simulation: alone.simulation }));
+        }
+        const both = await createAndSeedTransaction({ create: built, view: alone.view, seed: seedAction, trader, args: request.seed.args, inputs: seedInputs, rpc, walletWrappedSol: await walletWrappedSol(rpc, trader) });
+        // A hooked mint's transfers in the seed carry its hook's accounts, after the seed's own, as every action's do (PIPESCOPE-154).
+        const hooks = await actionHookAccounts(rpc, { market: { mints: alone.mints, view: alone.view }, trader, action: both.seed });
+        const seed = hooks.length ? { ...both.seed, accounts: [...(both.seed.accounts ?? []), ...hooks] } : both.seed;
+        instructions = both.instructions.map((i) => (i === both.seed ? seed : i));
+        seeded = { wrapped: both.wrapped, seed: { action: seedAction.name, check: seedCheck, accounts: accountsOf(seed) }, hooks: alone.mints.flatMap((m) => (m.transferHook ? [m.transferHook] : [])) };
+      }
+      const prepared = await prepareTransaction(rpc, { instructions, trader, strategy, market: null, what: seeded ? "Creating and seeding this market" : "Creating this market", hooks: seeded?.hooks, aviaryTable });
+      return c.json(PreparedMarket.parse({ ...marketBase(), ...(seeded ? { wrapped_sol: String(seeded.wrapped) } : {}), seed: seeded?.seed ?? null, ...prepared }));
     } catch (e) {
       if (e instanceof Refused) return refused(c, e);
       throw e;

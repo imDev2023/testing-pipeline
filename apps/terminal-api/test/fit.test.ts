@@ -42,7 +42,7 @@ describe("fitting a swap into one transaction", () => {
     ).toThrow("This swap needs more accounts than one transaction can carry, even with its market's address lookup table and Aviary's.");
   });
 
-  it("shortens one with every table it is given at once: the market's and Aviary's (PIPESCOPE-165)", () => {
+  it("shortens one with every table it is given at once: the market's and Aviary's (PIPESCOPE-167)", () => {
     // At most 64 accounts a transaction, so a long instruction makes half the accounts in one table too many.
     const keys = accounts(56);
     const long: Instruction = { ...instruction(keys), data: new Uint8Array(200) };

@@ -188,15 +188,19 @@ export async function readKeeperRecords(db: Db, options: { wallet: string; now: 
   };
 }
 
+const strings = <K extends string>(values: Record<K, bigint>) => Object.fromEntries(Object.entries<bigint>(values).map(([k, v]) => [k, v.toString()])) as Record<K, string>;
+const bigints = <K extends string>(values: Record<K, string>) => Object.fromEntries(Object.entries<string>(values).map(([k, v]) => [k, BigInt(v)])) as Record<K, bigint>;
+
+/** The keeper runner's records of one job unit on one market, newest first. */
+export type KeeperUnitRead = { job: string; slot: number | null; rows: Omit<KeeperJobRead, "pass">[] };
+
 /**
- * The latest record of each job and slot the keeper wallet's runner holds for one market, newest
- * first, for the market's panel: what the runner last did about each job it has met there (sent, held
- * by a cap, parked with its error, or found no longer due), PIPESCOPE-167.
+ * One keeper wallet's records on one market, grouped by job unit (job and slot), each newest first:
+ * for a product panel's due jobs, the runner's last attempt at each and since when it has seen it due.
  */
-export async function readMarketKeeperJobs(db: Db, options: { wallet: string; market: string }): Promise<KeeperJobRead[]> {
+export async function readKeeperUnits(db: Db, options: { wallet: string; market: string; limit: number }): Promise<KeeperUnitRead[]> {
   const rows = await db
-    .selectDistinctOn([keeperRunJobs.job, sql`coalesce(${keeperRunJobs.slot}, -1)`], {
-      pass: keeperRuns.pass,
+    .select({
       at: keeperRunJobs.at,
       market: keeperRunJobs.market,
       product: keeperRunJobs.product,
@@ -213,9 +217,14 @@ export async function readMarketKeeperJobs(db: Db, options: { wallet: string; ma
     .from(keeperRunJobs)
     .innerJoin(keeperRuns, eq(keeperRuns.id, keeperRunJobs.runId))
     .where(and(eq(keeperRuns.wallet, options.wallet), eq(keeperRunJobs.market, options.market)))
-    .orderBy(keeperRunJobs.job, sql`coalesce(${keeperRunJobs.slot}, -1)`, desc(keeperRunJobs.at), desc(keeperRunJobs.id));
-  return rows.sort((a, b) => b.at.getTime() - a.at.getTime());
+    .orderBy(desc(keeperRunJobs.at), desc(keeperRunJobs.id))
+    .limit(options.limit);
+  const units = new Map<string, KeeperUnitRead>();
+  for (const row of rows) {
+    const key = `${row.job}:${row.slot ?? ""}`;
+    const unit = units.get(key) ?? { job: row.job, slot: row.slot, rows: [] };
+    unit.rows.push(row);
+    units.set(key, unit);
+  }
+  return [...units.values()];
 }
-
-const strings = <K extends string>(values: Record<K, bigint>) => Object.fromEntries(Object.entries<bigint>(values).map(([k, v]) => [k, v.toString()])) as Record<K, string>;
-const bigints = <K extends string>(values: Record<K, string>) => Object.fromEntries(Object.entries<string>(values).map(([k, v]) => [k, BigInt(v)])) as Record<K, bigint>;

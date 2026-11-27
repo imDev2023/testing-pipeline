@@ -5,7 +5,8 @@
 import { address, getAddressEncoder, getBase64Decoder } from "@solana/kit";
 import { getTaxMarketEncoder, MarketStatus, SUITE_TREASURY, type TaxMarketArgs } from "tax-amm-scripts/client/index.ts";
 import { describe, expect, it } from "vitest";
-import { taxPanelView, tokenAccountAmount } from "@/products/taxAmm/panel";
+import type { MarketKeeper } from "terminal-api/contract";
+import { keeperLine, taxPanelView, tokenAccountAmount, type KeeperRead, type PayableSlot } from "@/products/taxAmm/panel";
 
 const TOKEN = address("AVimgQ4wqmdAk1C2ZSxbF3CnYv1o7b8mT1dWb2mR7eYx");
 const WSOL = address("So11111111111111111111111111111111111111112");
@@ -124,5 +125,30 @@ describe("taxPanelView", () => {
     expect(tokenAccountAmount(tokenAccount(42n))).toBe(42n);
     expect(tokenAccountAmount(base64(new Uint8Array(10)))).toBeNull();
     expect(tokenAccountAmount(null)).toBeNull();
+  });
+});
+
+describe("keeperLine", () => {
+  const NOW = new Date("2026-11-27T12:00:00.000Z");
+  const slot = (owed: bigint): PayableSlot => ({ slot: 2, who: "recipient", wallet: SECOND, owed, action: "distribute", inputs: { tax_mint: WSOL, recipient: SECOND } });
+  const keeper = (due: MarketKeeper["due"], ok = true): KeeperRead => ({ status: "loaded", data: { market: "4oPAw2WtnusKZxW8aprTc1Ldk3MyhiQdBeRFmfGhFJ9c", product: "tax-amm", slot: 1, due, records: { ok, error: ok ? null : "the database did not answer" } } });
+  const unit = (last: NonNullable<MarketKeeper["due"][number]["last"]> | null): MarketKeeper["due"][number] => ({ job: "distribute", key: "distribute:2", slot: 2, owed: "40", last, due_since: null });
+  const at = new Date(NOW.getTime() - 5 * 60_000).toISOString();
+
+  it("says what the runner last did about a slot it counts due, by the runner's own rule (PIPESCOPE-164)", () => {
+    expect(keeperLine(slot(40n), keeper([unit({ at, outcome: "held", signature: null, error: null, cap: "MARKET_DAILY_CAP" })]), NOW)).toBe("The keeper runner: Held by MARKET_DAILY_CAP, 5m ago.");
+    expect(keeperLine(slot(40n), keeper([unit({ at, outcome: "failed", signature: null, error: "blockhash expired", cap: null })]), NOW)).toMatch(/^The keeper runner: .+, 5m ago\.$/);
+    expect(keeperLine(slot(40n), keeper([unit(null)]), NOW)).toBe("The keeper runner counts it due and has not tried it yet.");
+    expect(keeperLine(slot(40n), keeper([unit(null)], false), NOW)).toBe("The keeper runner counts it due; its records could not be read.");
+  });
+
+  it("says a slot owed nothing has nothing for the runner to pay, and only another slot's job is not this slot's", () => {
+    expect(keeperLine(slot(0n), keeper([]), NOW)).toBe("The keeper runner has nothing to pay: it is owed nothing.");
+    expect(keeperLine(slot(40n), keeper([{ ...unit(null), key: "distribute:3", slot: 3 }]), NOW)).toBe("The keeper runner did not count it due when it was read.");
+  });
+
+  it("says while the runner's answer is loading, and when it failed", () => {
+    expect(keeperLine(slot(40n), { status: "loading" })).toBe("Reading the keeper runner's records…");
+    expect(keeperLine(slot(40n), { status: "failed" })).toBe("The keeper runner's records could not be read.");
   });
 });

@@ -220,6 +220,22 @@ const PAGES: { name: string; path: string; status: number; ready: (page: Page) =
   { name: "feed-strategies", path: "/?tab=strategies", status: 200, ready: (page: Page) => expect(page.getByRole("region", { name: "Strategies" }).getByRole("row").nth(1)).toBeVisible() },
   { name: "market", path: `/markets/${MARKET}`, status: 200, ready: marketReady("chart") },
   { name: "market-flipped", path: `/markets/${MARKET}?flip=1&interval=1h`, status: 200, ready: marketReady("chart") },
+  {
+    // The buy wall AMM's panel and its forms (#57), on its demo market: every part read from the market's state at one slot.
+    name: "market-buy-wall",
+    path: `/markets/${MARKET}`,
+    status: 200,
+    ready: async (page: Page) => {
+      await marketReady("chart")(page);
+      const panel = page.getByRole("region", { name: "Buy wall AMM", exact: true });
+      await expect(panel.getByText(/^Read from the market's state at slot [\d,]+, not from its vaults/)).toBeVisible();
+      for (const part of ["Price and the buy wall", "Inventory cap", "Retired, owed and burned", "The fee", "Parameters and recipients"]) await expect(panel.getByRole("heading", { name: part, exact: true })).toBeVisible();
+      await expect(panel.getByText("No wallet yet: it waits in the market until the program names one")).toBeVisible();
+      const forms = page.getByRole("region", { name: "Buy wall AMM: keeper jobs and roles" });
+      await expect(forms.getByRole("heading", { name: "Keeper jobs due" })).toBeVisible();
+      await expect(forms.getByText(/^No keeper job is due on this market now\.$|^Simulate this job$/).first()).toBeVisible();
+    },
+  },
   { name: "market-hooked", path: `/markets/${MARKET_HOOKED}`, status: 200, ready: async (page: Page) => factsReady(page, ["This market", "Its strategy", "Its mints"]) },
   { name: "market-one-trade", path: `/markets/${MARKET_WITH_ONE_TRADE}`, status: 200, ready: marketReady("chart") },
   {
@@ -287,6 +303,19 @@ const PAGES: { name: string; path: string; status: number; ready: (page: Page) =
     status: 200,
     ready: actionReviewed("Change the taxes", {}, { buy_tax_bps: "600", sell_tax_bps: "900" }, "refused"),
     wallet: true,
+  },
+  {
+    // The buy wall AMM's own create form (#57): IMD's launch values filled in, the whole fee split beside them.
+    name: "create-buy-wall",
+    path: `/create?strategy=${STRATEGY}`,
+    status: 200,
+    ready: async (page: Page) => {
+      const form = page.getByRole("region", { name: "The create form" });
+      await expect(form.getByRole("textbox", { name: /\bfee_bps u16\b/ })).toHaveValue("100");
+      await expect(form.getByRole("textbox", { name: /\breward_share_bps u16\b/ })).toHaveValue("1500");
+      await expect(form.getByRole("region", { name: "The whole fee split" }).getByText("0.1% of each swap (10% of the fee)").first()).toBeVisible();
+      await expect(form.getByText("Enter the token's mint above to fill in the seed.")).toBeVisible();
+    },
   },
   // The tax AMM in Aviary (#75): the tax panel on its demo market, a slot's payout reviewed from it, and the launch form filled.
   { name: "market-tax-panel", path: `/markets/${TAX_MARKET}`, status: 200, ready: taxPanelReady("read") },

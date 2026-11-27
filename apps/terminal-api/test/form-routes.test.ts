@@ -198,7 +198,7 @@ describe("POST /v1/markets/prepare", () => {
     expect((await post("/v1/markets/prepare", { strategy: MISSING, args: {}, inputs: {}, trader: TRADER })).status).toBe(404);
   });
 
-  describe("opening the new market in the same transaction (PIPESCOPE-164)", () => {
+  describe("opening the new market in the same transaction (PIPESCOPE-166)", () => {
     const then = (actions: unknown[]) => ({ mints: [MINT, MISSING], vaults: [RESERVE, ORACLE], actions });
 
     it("answers 404 for an action the strategy's metadata does not describe, before anything is built", async () => {
@@ -234,5 +234,20 @@ describe("POST /v1/markets/prepare", () => {
       expect(status).toBe(400);
       expect(JSON.stringify(body)).toContain("recipient");
     });
+
+    it("refuses a new market sent both with actions to open it and with a seed, before anything is built", async () => {
+      const { status, body } = await post("/v1/markets/prepare", { strategy: TAX, args: {}, inputs: {}, trader: TRADER, then: then([{ action: "seed", args: {}, inputs: {} }]), seed: { action: "seed", args: {}, inputs: {} } });
+      expect(status).toBe(422);
+      expect((body as ApiError).error).toBe("A new market either opens with the actions in then or is seeded by seed; send one of them.");
+    });
+  });
+
+  it("sends with a new market only a seed its strategy's metadata describes as add_liquidity (#57)", async () => {
+    const unknown = await post("/v1/markets/prepare", { strategy: TAX, args: {}, inputs: {}, trader: TRADER, seed: { action: "nope", args: {}, inputs: {} } });
+    expect(unknown.status).toBe(404);
+    expect((unknown.body as ApiError).error).toBe("This strategy describes no action named nope in its metadata.");
+    const payout = await post("/v1/markets/prepare", { strategy: TAX, args: {}, inputs: {}, trader: TRADER, seed: { action: "distribute", args: {}, inputs: {} } });
+    expect(payout.status).toBe(422);
+    expect((payout.body as ApiError).error).toBe("distribute is not a seed: only an add_liquidity action can be sent with a new market.");
   });
 });

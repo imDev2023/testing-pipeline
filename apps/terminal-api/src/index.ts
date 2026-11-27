@@ -19,6 +19,7 @@ import { formRoutes } from "./forms";
 import { dbOf, requestDb } from "./requestDb";
 import { health } from "./health";
 import { keeperRoutes } from "./keeper";
+import { marketKeeperRoutes } from "./marketKeeper";
 import { ROOM_HEADER, roomOf } from "./roomCore";
 import { limitReads } from "./rateLimits";
 import { lendingAmmRoutes } from "./products/lendingAmm/routes";
@@ -94,6 +95,7 @@ app.get("/v1/indexer", async (c) => c.json(await indexer(c.env).status()));
 /** The one indexer, by name, so every caller reaches the same instance. */
 export const indexer = (env: Bindings) => env.INDEXER.get(env.INDEXER.idFromName("router"));
 keeperRoutes(app);
+marketKeeperRoutes(app);
 tradingRoutes(app);
 actionRoutes(app);
 lendingAmmRoutes(app);
@@ -136,8 +138,8 @@ async function canarySweep(env: Bindings): Promise<void> {
 async function explainerKeys(env: Bindings): Promise<void> {
   const { db, close } = createDb(env.HYPERDRIVE.connectionString);
   try {
-    const { made, revived, waiting } = await makeExplainerKeys(db, { rpcUrl: env.RPC_URL });
-    if (made.length || revived.length || waiting.length) console.log("explainer keys", { made, revived, waiting });
+    const { made, revived, waiting, unread } = await makeExplainerKeys(db, { rpcUrl: env.RPC_URL });
+    if (made.length || revived.length || waiting.length || unread.length) console.log("explainer keys", { made, revived, waiting, unread });
   } finally {
     await close();
   }

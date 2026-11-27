@@ -29,7 +29,7 @@ export type Bindings = {
   /** The live rooms, one per market and one for the feed, by name (docs/spec/pipescope-architecture.md, Live rooms). */
   LIVE_ROOMS: DurableObjectNamespace<LiveRoom>;
   /**
-   * Aviary's own address lookup table (PIPESCOPE-165): a frozen table of addresses every market shares,
+   * Aviary's own address lookup table (PIPESCOPE-167): a frozen table of addresses every market shares,
    * which shortens a transaction that would not fit otherwise, such as a tax market's launch. Empty
    * for none; `apps/terminal-api/scripts/lookup-table.ts` makes one on a cluster.
    */

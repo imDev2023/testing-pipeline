@@ -203,6 +203,15 @@ export const PUBLIC_CACHE_MAX_AGE_SECONDS = 60;
  */
 export const RATE_LIMIT_PERIOD_SECONDS = 60;
 
+/**
+ * The network fee a review shows (#57): `getFeeForMessage` is asked this many times while it answers
+ * null, which a load-balanced RPC does for a blockhash one of its nodes has not seen yet, this long
+ * apart; when it never answers, the fee is Solana's base fee for each required signature.
+ */
+export const NETWORK_FEE_ASKS = 3;
+export const NETWORK_FEE_PAUSE_MS = 400;
+export const BASE_FEE_LAMPORTS_PER_SIGNATURE = 5_000n;
+
 /** How long `/health` waits for the RPC and for the database before calling them unreachable. */
 export const HEALTH_TIMEOUT_MS = 5 * SECOND;
 
@@ -213,6 +222,8 @@ export const HEALTH_TIMEOUT_MS = 5 * SECOND;
  */
 export const KEEPER_STOPPED_GRACE_MS = 5 * MINUTE;
 export const KEEPER_RECENT_JOBS = 20;
+/** A product panel's due jobs (`GET /v1/markets/{market}/keeper`, #57) look back over this many of the runner's latest records on the market. */
+export const KEEPER_MARKET_RECORDS = 200;
 
 /**
  * The keeper runner's heartbeats (SUITE-57): one is kept only if its time is within this much of

@@ -644,6 +644,43 @@ export const KeeperJob = z.object({
 });
 export type KeeperJob = z.infer<typeof KeeperJob>;
 
+/**
+ * `GET /v1/markets/{market}/keeper` (docs/spec/keeper-runner.md, How Aviary shows it; #57): the keeper
+ * jobs due on a market of one of our strategies, by the due rules the keeper runner itself uses
+ * (`packages/keeper-jobs`), read from the market's state at one slot, each with the keeper runner's
+ * last attempt at it. A market of any other strategy has no product and nothing due.
+ */
+export const MarketKeeper = z.object({
+  market: Address,
+  /** The product the market's strategy is (`buy-wall-amm`, `tax-amm`, `lending-amm`), or null. */
+  product: z.string().nullable(),
+  /** The slot the market's state was read at, or null when nothing was read. */
+  slot: z.number().int().nullable(),
+  due: z.array(
+    z.object({
+      /** The job's instruction, as the strategy's metadata names its action. */
+      job: z.string(),
+      /** The unit within the market, `sweep_fees:2`. */
+      key: z.string(),
+      /** The job's slot, for jobs sent once per slot. */
+      slot: z.number().int().nullable(),
+      /** What it would move, in the market's own units, or null. */
+      owed: Amount.nullable(),
+      /** The keeper runner's latest record of this unit on this market, or null when it has none. */
+      last: z.object({ at: z.iso.datetime(), outcome: z.string(), signature: z.string().nullable(), error: z.string().nullable(), cap: z.string().nullable() }).nullable(),
+      /**
+       * Since when the runner has seen it due without landing it: its first record since its last
+       * landed one, when every record since was a hold, a park, a failure or a wait for a later slot;
+       * else null, since Aviary cannot tell when it fell due.
+       */
+      due_since: z.iso.datetime().nullable(),
+    }),
+  ),
+  /** Whether the runner's records could be read; the due jobs stand without them. */
+  records: z.object({ ok: z.boolean(), error: z.string().nullable() }),
+});
+export type MarketKeeper = z.infer<typeof MarketKeeper>;
+
 /** `GET /keeper`: what the keeper runner did and spends, for the keeper page (PIPESCOPE-97, PIPESCOPE-104). */
 export const Keeper = z.object({
   /** The keeper wallet Aviary shows. */
@@ -690,19 +727,6 @@ export const Keeper = z.object({
   records: z.object({ ok: z.boolean(), error: z.string().nullable() }),
 });
 export type Keeper = z.infer<typeof Keeper>;
-
-/**
- * `GET /v1/markets/{market}/keeper`: the keeper runner's latest record of each job and slot on one
- * market, newest first, so the market's panel shows beside each due job what the runner last did about
- * it (docs/spec/keeper-runner.md, "How Aviary shows it"; PIPESCOPE-167).
- */
-export const MarketKeeper = z.object({
-  market: Address,
-  /** The keeper wallet whose runner's records these are. */
-  wallet: z.string(),
-  jobs: z.array(KeeperJob),
-});
-export type MarketKeeper = z.infer<typeof MarketKeeper>;
 
 // ---- Trading (docs/spec/pipescope-architecture.md, Trading path) ----
 
@@ -872,7 +896,7 @@ export type PreparedAction = z.infer<typeof PreparedAction>;
 export const OPENING_ACTIONS_MAX = 2;
 
 /**
- * A new market opened in the transaction that creates it (PIPESCOPE-164): its mints and their vaults in
+ * A new market opened in the transaction that creates it (PIPESCOPE-166): its mints and their vaults in
  * the market's order, as the product's own form works them out before the market exists, so the router's
  * fee account for each mint is created, and then the actions of its metadata, by name, run on it.
  */
@@ -890,7 +914,22 @@ export type MarketOpening = z.infer<typeof MarketOpening>;
  * market state's address when the form makes one: its keypair is made in the page, which signs with
  * it after the wallet's prompt is built, so no key leaves the page (PIPESCOPE-144).
  */
-export const PrepareMarketRequest = z.object({ strategy: Address, ...FormValues, market_state: Address.optional(), trader: Address, then: MarketOpening.optional() }).strict();
+/**
+ * `POST /v1/markets/prepare`: a new market from a strategy's create form, for the wallet that will sign
+ * it. With `then`, the actions it runs as it opens, built on its mints and vaults as named (PIPESCOPE-166);
+ * with `seed`, the strategy's add_liquidity action by its metadata name, built on the market as a
+ * simulation of its creation leaves it, after a fee account for each of its mints (#57). One or the other.
+ */
+export const PrepareMarketRequest = z
+  .object({
+    strategy: Address,
+    ...FormValues,
+    market_state: Address.optional(),
+    trader: Address,
+    then: MarketOpening.optional(),
+    seed: z.object({ action: z.string().min(1).max(64), ...FormValues }).strict().optional(),
+  })
+  .strict();
 export type PrepareMarketRequest = z.infer<typeof PrepareMarketRequest>;
 
 /** A prepared new market: its address and market state, whether that state must sign, the create form's check, and the unsigned transaction when its simulation passed. */
@@ -901,9 +940,12 @@ export const PreparedMarket = z.object({
   market_state_signs: z.boolean(),
   check: FormCheck,
   accounts: z.array(ResolvedAccount),
+  /** SOL wrapped for the transaction: the create form's, or the seed's when one is sent with it. */
   wrapped_sol: Amount,
   /** The most SOL the strategy's setup may take from the creator, which `create_market` carries (PIPESCOPE-144). */
   max_creator_lamports: Amount,
+  /** The seed sent with it (#57): its action's name, the check of the instruction it sends and every account it touches; null for a market created alone. */
+  seed: z.object({ action: z.string(), check: FormCheck, accounts: z.array(ResolvedAccount) }).nullable(),
   transaction: z.string().nullable(),
   simulation: TransactionSimulation,
 });

@@ -28,6 +28,7 @@ import {
   type Address,
   type Base64EncodedWireTransaction,
   type Blockhash,
+  type GetFeeForMessageApi,
   type Instruction,
   type ReadonlyUint8Array,
   type Rpc,
@@ -41,6 +42,7 @@ import { decodeFailure } from "./failure";
 import { swapHookAccounts } from "./hooks";
 import { pendingRateQuote } from "./pendingRates";
 import type { TradeMarket } from "./market";
+import { BASE_FEE_LAMPORTS_PER_SIGNATURE, NETWORK_FEE_ASKS, NETWORK_FEE_PAUSE_MS } from "../config";
 import { COMMITMENT, quoteTyped, Refused } from "./quote";
 
 const base64 = getBase64Encoder();
@@ -60,7 +62,7 @@ export type PrepareInput = {
   typed: bigint;
   slippageBps: number;
   trader: Address;
-  /** Aviary's own lookup table, when this deployment names one (PIPESCOPE-165). */
+  /** Aviary's own lookup table, when this deployment names one (PIPESCOPE-167). */
   aviaryTable: Address | null;
 };
 
@@ -183,7 +185,7 @@ export class TooLarge extends Error {}
 /**
  * An address lookup table a transaction may be shortened by, with whose it is: the market's own,
  * recorded with Pipeline's router, or Aviary's, a frozen table of addresses every market shares
- * (PIPESCOPE-165).
+ * (PIPESCOPE-167).
  */
 export type LookupTable = { address: Address; addresses: readonly Address[]; whose: "market" | "aviary" };
 type Fitted = { wire: Base64EncodedWireTransaction; messageBytes: ReadonlyUint8Array; version: "legacy" | 0 };
@@ -330,19 +332,36 @@ type Watch = {
   receivesSol: boolean;
 };
 
+/** The message's required signatures, from its header: after the version prefix of a versioned message. */
+const requiredSignatures = (message: ReadonlyUint8Array): bigint => BigInt((message[0]! & 0x80 ? message[1] : message[0]) ?? 1);
+
+/**
+ * The network fee of a message: the RPC's `getFeeForMessage`, asked again while it answers null, or
+ * Solana's base fee for each required signature when it never answers, so a review never shows a
+ * transaction as free (`NETWORK_FEE_ASKS`, `NETWORK_FEE_PAUSE_MS`, `BASE_FEE_LAMPORTS_PER_SIGNATURE`).
+ */
+export async function networkFeeOf(rpc: Rpc<GetFeeForMessageApi>, messageBytes: ReadonlyUint8Array, { pauseMs = NETWORK_FEE_PAUSE_MS }: { pauseMs?: number } = {}): Promise<bigint> {
+  const message = getBase64Decoder().decode(messageBytes) as TransactionMessageBytesBase64;
+  for (let ask = 1; ask <= NETWORK_FEE_ASKS; ask++) {
+    const { value } = await rpc.getFeeForMessage(message, { commitment: COMMITMENT }).send();
+    if (value !== null) return value;
+    if (ask < NETWORK_FEE_ASKS) await new Promise((done) => setTimeout(done, pauseMs));
+  }
+  return requiredSignatures(messageBytes) * BASE_FEE_LAMPORTS_PER_SIGNATURE;
+}
+
 /**
  * Simulates the exact transaction to be signed (Simulation before every signature): signature checks
  * off, the blockhash replaced, the post-state of `watched` asked for, and the network fee read for
  * its message. An RPC that refuses the simulation itself is told plainly, never with its URL.
  */
 export async function runSimulation(rpc: Rpc<SolanaRpcApi>, wire: Base64EncodedWireTransaction, messageBytes: ReadonlyUint8Array, watched: readonly Address[], what: string) {
-  const message = getBase64Decoder().decode(messageBytes) as TransactionMessageBytesBase64;
   try {
-    const [{ value }, fee] = await Promise.all([
+    const [{ value }, networkFee] = await Promise.all([
       rpc.simulateTransaction(wire, { encoding: "base64", sigVerify: false, replaceRecentBlockhash: true, commitment: COMMITMENT, accounts: { addresses: [...watched], encoding: "base64" } }).send(),
-      rpc.getFeeForMessage(message, { commitment: COMMITMENT }).send(),
+      networkFeeOf(rpc, messageBytes),
     ]);
-    return { value, networkFee: fee.value ?? 0n };
+    return { value, networkFee };
   } catch (e) {
     const raw = (e instanceof Error ? e.message : String(e)).replace(/https?:\/\/\S+/g, "the RPC");
     throw new Refused({ class: "unavailable", sentence: `${what} could not be simulated, so there is nothing to sign. Try again in a moment.`, name: null, number: null, message: null, program: null, raw });

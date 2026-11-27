@@ -40,7 +40,7 @@ export async function bodyOf<T extends z.ZodType>(c: Context<AppEnv>, schema: T)
   return parsed.data;
 }
 
-/** Aviary's own lookup table, when this deployment names one (`AVIARY_LOOKUP_TABLE`, PIPESCOPE-165). */
+/** Aviary's own lookup table, when this deployment names one (`AVIARY_LOOKUP_TABLE`, PIPESCOPE-167). */
 export function aviaryTableOf(env: { AVIARY_LOOKUP_TABLE?: string }): Address | null {
   const named = env.AVIARY_LOOKUP_TABLE?.trim();
   if (!named) return null;

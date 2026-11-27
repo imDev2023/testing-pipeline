@@ -1,4 +1,4 @@
-// A strategy's own reserves, where its vaults hold more than its liquidity (PIPESCOPE-166). Pipeline's
+// A strategy's own reserves, where its vaults hold more than its liquidity (PIPESCOPE-168). Pipeline's
 // router names each market's vaults, and Aviary shows what they hold, but a strategy can keep in a
 // vault what is not its liquidity: a tax market's tax-side vault also holds the tax not yet paid out,
 // so docs/spec/tax-amm.md ("Payout") has Aviary read the real reserves from the market state instead.

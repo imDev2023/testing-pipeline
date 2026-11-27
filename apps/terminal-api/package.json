@@ -10,6 +10,7 @@
         "./contract": "./src/contract.ts",
         "./config": "./src/config.ts",
         "./amounts": "./src/trading/amounts.ts",
+        "./products/buy-wall": "./src/products/buyWall.ts",
         "./lending-amm": "./src/products/lendingAmm/contract.ts"
     },
     "scripts": {
@@ -25,6 +26,7 @@
         "@solana-program/token": "0.18.0",
         "@solana-program/token-2022": "0.20.0",
         "@solana/kit": "8.6.0",
+        "buy-wall-amm-scripts": "workspace:*",
         "drizzle-orm": "0.45.4",
         "hono": "4.13.20",
         "keeper-jobs": "workspace:*",

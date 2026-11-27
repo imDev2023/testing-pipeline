@@ -11,9 +11,12 @@
 // The evidence: P items, Pipeline's rules (terminal-explainer); F items, the program and its version,
 // its instructions, its markets and the markets this version cannot read, the representative market
 // (most swaps through Pipeline, then the largest SOL vault; EXPLAINER-03) with its mints and vaults,
-// and the transactions observed; C items, Canary's records; A items, the normalised metadata, with
-// the F items of what code checked of it. S items wait for verified builds (#128).
+// and the transactions observed; for one of our products, what its panel shows of the representative
+// market, read from the chain at one slot, and its risks (./products, #57); C items, Canary's
+// records; A items, the normalised metadata, with the F items of what code checked of it. S items
+// wait for verified builds (#128).
 import { FLAG_DESCRIPTIONS } from "@pipeline-sol/sdk";
+import { address, createSolanaRpc } from "@solana/kit";
 import { and, asc, count, countDistinct, desc, eq, inArray, max, min, sql } from "drizzle-orm";
 import {
   canaryResults,
@@ -49,6 +52,7 @@ import { CHECK_ABOUT } from "./canarySentences";
 import { AVIARY_MINT_NAMES, WRAPPED_SOL } from "./config";
 import { mintFacts } from "./facts";
 import { ROUTER } from "./indexerCore";
+import { PRODUCT_EVIDENCE, ProductNotRead, type ReadAccounts } from "./products";
 import { lendingEvidence } from "./products/lendingAmm/facts";
 import { LENDING_AMM_PROGRAM } from "./products/lendingAmm/read";
 import { readStrategyInstructions } from "./strategies";
@@ -242,6 +246,39 @@ async function canaryItems(db: Db, { program, version, outcomes }: Current, repr
   return items;
 }
 
+/**
+ * One of our products' facts (./products): what its panel shows of the sampled market, read from the
+ * chain at one slot, and the risks of every market of it; nothing for any other strategy.
+ */
+async function productItems(db: Db, program: string, representative: string | null, read: ReadAccounts | null): Promise<Fact[]> {
+  const product = PRODUCT_EVIDENCE[program];
+  if (!product) return [];
+  if (!representative) return [...product.risks];
+  const [row] = await db.select({ marketState: markets.marketState }).from(markets).where(eq(markets.address, representative));
+  const mintRows = await db.select({ mint: marketMints.mint }).from(marketMints).where(eq(marketMints.market, representative)).orderBy(asc(marketMints.position));
+  if (!row) throw new ProductNotRead("the sampled market is not indexed yet");
+  // A caller with no RPC (a test, the e2e suite's seeding script) chose not to read the chain: its key says so.
+  if (!read) return [{ group: "Market", label: "Sampled market's state", value: "Not read by Aviary for this explanation.", source: "the sampled market's state account" }, ...product.risks];
+  // Without the panel's facts the evidence would be poorer for good, since a recorded key is never rebuilt: a read that fails makes the key wait for a later run.
+  try {
+    return [...(await product.facts({ marketState: row.marketState, mints: mintRows.map((m) => m.mint) }, read)), ...product.risks];
+  } catch (e) {
+    if (e instanceof ProductNotRead) throw e;
+    // The error can quote the RPC's URL, which carries the key: say only what kind of failure it was.
+    throw new ProductNotRead(`reading the sampled market's state failed (${e instanceof Error ? e.name : typeof e})`);
+  }
+}
+
+/** Reads accounts through the RPC at one slot, for a product's facts. */
+const rpcReader =
+  (rpcUrl: string): ReadAccounts =>
+  async (addresses) => {
+    const { context, value } = await createSolanaRpc(rpcUrl)
+      .getMultipleAccounts(addresses.map((a) => address(a)), { encoding: "base64", commitment: "confirmed" })
+      .send();
+    return { slot: Number(context.slot), data: value.map((a) => (a ? new Uint8Array(Buffer.from(a.data[0], "base64")) : null)) };
+  };
+
 /** The evidence of a strategy's current version, and what its key row records beside it. */
 async function buildEvidence(db: Db, at: Current, rpcUrl: string | undefined): Promise<{ evidence: EvidenceItem[]; representative: string | null; addressesAi: boolean }> {
   const [router] = await db.select({ upgradeAuthority: programFacts.upgradeAuthority }).from(programFacts).where(eq(programFacts.program, ROUTER));
@@ -256,8 +293,9 @@ async function buildEvidence(db: Db, at: Current, rpcUrl: string | undefined): P
     removed: snapshot.status === "valid" ? (snapshot.removed as Removed) : null,
     instructions: program.instructions,
   });
-  // Our own products add what their panels show, read for the sampled market (#88).
-  const product = at.program === LENDING_AMM_PROGRAM ? await lendingEvidence(db, market.representative, rpcUrl) : [];
+  // Our own products add what their panels show, read for the sampled market: the lending AMM's (#88) and the buy wall AMM's (#57).
+  const product =
+    at.program === LENDING_AMM_PROGRAM ? await lendingEvidence(db, market.representative, rpcUrl) : await productItems(db, at.program, market.representative, rpcUrl ? rpcReader(rpcUrl) : null);
   const facts = [...program.facts, ...author.facts, ...market.facts, ...product, ...(program.custom ? [program.custom] : [])];
   const evidence = assembleEvidence({ pipeline: pipelineRules({ routerUpgradeAuthority: router?.upgradeAuthority ?? null }), facts, canary, author: author.author });
   return { evidence, representative: market.representative, addressesAi: author.addressesAi };
@@ -289,13 +327,15 @@ const snapshotAddressesAi = (snapshot: Snapshot): boolean =>
 /**
  * Makes the key of each strategy's current version (of `programs`, or of every strategy), and for
  * each key not recorded yet builds its evidence and records it pending. Says which strategies got a
- * new key, and which wait for their metadata's new link to be fetched.
+ * new key, which wait for their metadata's new link to be fetched, and which wait for their product's
+ * facts, which could not be read this time (#57).
  */
-export async function makeExplainerKeys(db: Db, { programs, rpcUrl }: { programs?: string[]; rpcUrl?: string } = {}): Promise<{ made: string[]; revived: string[]; waiting: string[] }> {
+export async function makeExplainerKeys(db: Db, { programs, rpcUrl }: { programs?: string[]; rpcUrl?: string } = {}): Promise<{ made: string[]; revived: string[]; waiting: string[]; unread: string[] }> {
   const rows = await db.select({ program: strategies.program, metadataUri: strategies.metadataUri }).from(strategies).where(programs ? inArray(strategies.program, programs) : undefined);
   const made: string[] = [];
   const revived: string[] = [];
   const waiting: string[] = [];
+  const unread: string[] = [];
   for (const { program, metadataUri } of rows) {
     const at = await current(db, program, metadataUri);
     if (at === "no-version") continue;
@@ -309,10 +349,19 @@ export async function makeExplainerKeys(db: Db, { programs, rpcUrl }: { programs
       if (await reviveExplainerKey(db, key.id)) revived.push(program);
       continue;
     }
-    const { evidence, representative, addressesAi } = await buildEvidence(db, at, rpcUrl);
+    let built;
+    try {
+      built = await buildEvidence(db, at, rpcUrl);
+    } catch (e) {
+      if (!(e instanceof ProductNotRead)) throw e;
+      console.error(`explainer: ${program}'s key waits for its product's facts: ${e.message}`);
+      unread.push(program);
+      continue;
+    }
+    const { evidence, representative, addressesAi } = built;
     const cost = estimateCost({ program, deploySlot: at.version.deploySlot, evidence });
     const { id, ...parts } = key;
     if (await recordExplainerKey(db, { key: id, ...parts, evidence, representativeMarket: representative, authorTextAddressesAi: addressesAi, estimatedInputTokens: cost.inputTokens, estimatedCostUsd: cost.usd })) made.push(program);
   }
-  return { made: made.sort(), revived: revived.sort(), waiting: waiting.sort() };
+  return { made: made.sort(), revived: revived.sort(), waiting: waiting.sort(), unread: unread.sort() };
 }

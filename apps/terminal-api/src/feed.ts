@@ -93,7 +93,7 @@ function hiddenOf(c: Context<FeedEnv>): string[] {
 
 /**
  * A market's SOL liquidity, as SQL: its strategy's own reserve of SOL where Aviary reads one, else what
- * its SOL vault holds (PIPESCOPE-166); zero for a market with no SOL side, which `hasSolSide` tells.
+ * its SOL vault holds (PIPESCOPE-168); zero for a market with no SOL side, which `hasSolSide` tells.
  */
 const solLiquidity = sql`(select coalesce(max(coalesce(mm.reserve, mm.vault_amount)), 0) from ${marketMints} mm where mm.market = ${markets.address} and mm.mint = ${WRAPPED_SOL})`;
 const hasSolSide = sql`exists (select 1 from ${marketMints} mm where mm.market = ${markets.address} and mm.mint = ${WRAPPED_SOL})`;

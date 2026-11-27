@@ -949,13 +949,28 @@ DATABASE_URL=<a fresh migrated database> E2E_API_PORT=8871 E2E_WEB_PORT=3171 pnp
 The wallet page's tests on the recorded fixtures (`src/wallet.spec.ts`) review an unwrap for the test trader, so before recording give it wrapped SOL with `pnpm --filter terminal-e2e wrap-sol` (0.01 SOL of `e2e-trader.json`'s, by default), after any `swaps:devnet` run, since a sale into SOL through the trade box closes that account.
 The three-mint market's tests (`src/trade.spec.ts`, #122) review a swap in each direction on devnet's Counterflow market `FNdAWctS...` for the test trader, so it must hold all three mints when recording: `swaps:devnet` trades them first.
 `pnpm --filter terminal-e2e tax:devnet` (`E2E_TAX_DEVNET`, never in CI, #75) launches a tax market of a fresh token from the tax AMM's launch form with the test trader's key, buys and sells it through the trade box, pays out each slot from the tax panel, sends `set_taxes`, `set_recipients` and `renounce_tax_authority` from the generic forms, and checks every figure the panel shows against the chain; it locks 0.5 devnet SOL in each market it launches, writes its signatures to `tests/terminal-e2e/test-results/tax-devnet.json`, and `E2E_TAX_MARKET=<market>` resumes on a market it launched before.
-Aviary's own address lookup table (`PIPESCOPE-165`), which a launch needs to fit one transaction, is made once per cluster by `node apps/terminal-api/scripts/lookup-table.ts [--url <rpc>]` with the project's devnet wallet, and named to the API by `AVIARY_LOOKUP_TABLE` (in `wrangler.jsonc` for devnet; with `--var AVIARY_LOOKUP_TABLE:<address>` for a local validator).
+Aviary's own address lookup table (`PIPESCOPE-167`), which a launch needs to fit one transaction, is made once per cluster by `node apps/terminal-api/scripts/lookup-table.ts [--url <rpc>]` with the project's devnet wallet, and named to the API by `AVIARY_LOOKUP_TABLE` (in `wrangler.jsonc` for devnet; with `--var AVIARY_LOOKUP_TABLE:<address>` for a local validator).
 
 ### The lending AMM in Aviary on devnet
 
 `pnpm --filter terminal-e2e lending:devnet` (`E2E_LENDING_DEVNET`, never in CI) is the lending AMM panel's devnet run (#88): the Playwright test wallet holds `e2e-trader.json` and, through the local run's pages, creates a lending AMM market from the create form, adds, rebalances, removes in cash and in kind and locks; checks the panel's two largest sells against the strategy's own quote; turns the WSOL reserve's emergency mode on and off and has the test borrower borrow and repay with `scripts/kamino-devnet` (run `npm ci` there first); and creates a market of a token our containment hook binds with the project wallet.
 It moves our shared devnet Kamino reserve for a few minutes and puts it back after, whatever happens; the signatures go to `tests/terminal-e2e/test-results/lending.json`.
 Creating the market spends about 1.6 SOL of the test trader's, so `LENDING_MARKET=<market>` reruns the later steps on a market an earlier run made.
+
+### The buy wall AMM's panel on devnet
+
+The devnet run of [#57](https://github.com/imDev2023/testing-pipeline/issues/57), `tests/terminal-e2e/demo/buy-wall.ts`, never in CI: with the Playwright test wallet holding the test trader's key, it makes a Token-2022 token with a cleared transfer hook, creates and seeds a market of it from the create page's buy wall form, trades it through the trade box, presses each keeper job that falls due from the panel's buttons, hands the fee recipient role to the project wallet, then trades the demo market and presses its due jobs, with screenshots at 1440 and 390 px in both themes.
+It spends about 0.7 SOL of the test trader's (the seed's 0.5 SOL stays in the new market for good) and needs about 1.2 SOL at its peak, so fund it first with `devnet-airdrop`, or from the project wallet when the faucets refuse.
+Start Aviary's local run on ports of its own (with `MINIFLARE_WORKERD_PATH` set as above), then from the repo's root:
+
+```sh
+(apps/terminal-api) TERMINAL_API_PORT=8857 node scripts/dev.ts --enable-containers=false
+(apps/terminal-web) NEXT_PUBLIC_API_URL=http://localhost:8857 pnpm exec opennextjs-cloudflare build && pnpm exec opennextjs-cloudflare preview --port 3157
+DEMO_API=http://localhost:8857 DEMO_WEB=http://localhost:3157 node tests/terminal-e2e/demo/buy-wall.ts
+```
+
+- Each signature and what each review showed go to `tests/terminal-e2e/test-results/buy-wall-demo.json`, the screenshots to `tests/terminal-e2e/screenshots/demo/buy-wall/`.
+- The keeper runner, when it runs, sends `place_wall` about a second after a swap, so stop it first or the run finds that job already done.
 
 ## Known problems
 

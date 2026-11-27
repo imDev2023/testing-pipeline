@@ -1,4 +1,4 @@
-// Makes Aviary's own address lookup table on a cluster (PIPESCOPE-165): creates it, extends it with
+// Makes Aviary's own address lookup table on a cluster (PIPESCOPE-167): creates it, extends it with
 // what `aviaryLookupTableAddresses` lists for every strategy registered with Pipeline's router now,
 // then freezes it, so nobody, its maker included, can ever change what it holds. The API reads it
 // through `AVIARY_LOOKUP_TABLE` (wrangler.jsonc's var for devnet; `--var` for a local validator's).

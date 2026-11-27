@@ -14,15 +14,14 @@ import { MarketKeeper, MarketRead, type Market, type MarketMint } from "terminal
 import { getFromApi } from "@/api";
 import { BRAND } from "@/brand";
 import { SLOT_MS_ESTIMATE } from "@/config";
-import { formatAge, formatInteger } from "@/format";
-import { outcomeText, waitingReason } from "@/keeperText";
+import { formatInteger } from "@/format";
 import { ROUTES } from "@/routes";
 import { FactList, FactPart } from "@/components/facts/Facts";
 import { TokenAmount } from "@/components/MarketsTable";
 import { MintLabel } from "@/components/MintLabel";
 import { PanelFrame, useLoad, type Loaded } from "@/components/Panel";
 import { ShortAddress } from "@/components/ShortAddress";
-import { taxPanelView, type PayableSlot, type TaxPanelView } from "./panel";
+import { keeperLine, taxPanelView, type PayableSlot, type TaxPanelView } from "./panel";
 import { Payout } from "./Payout";
 import { partName, SplitTable } from "./SplitTable";
 import styles from "./TaxAmm.module.css";
@@ -194,23 +193,12 @@ function Rate({ bps, range, what }: { bps: number; range: [number, number]; what
 
 /** A slot's name, who it pays, what it is owed and what the keeper runner last did about it. */
 function SlotLine({ slot, owed, keeper }: { slot: PayableSlot; owed: React.ReactNode; keeper: Loaded<MarketKeeper> }) {
-  const recorded = keeper.status === "loaded" ? keeper.data.jobs.find((j) => j.job === "distribute" && j.slot === slot.slot) : undefined;
   return (
     <div className={styles.slotLine}>
       <span className={styles.slotName}>{partName(slot)}</span>
       <span className={styles.slotWho}>{slot.who === "burn" ? "Burned" : <ShortAddress address={slot.wallet!} />}</span>
       <span className={styles.slotOwed}>Owed {owed}</span>
-      <span className={styles.slotKeeper}>
-        {keeper.status === "failed"
-          ? "The keeper runner's records could not be read."
-          : keeper.status === "loading"
-            ? "Reading the keeper runner's records…"
-            : recorded
-              ? recorded.outcome === "held" || recorded.outcome === "parked"
-                ? `The keeper runner: ${waitingReason(recorded)}, ${formatAge(new Date(recorded.at))}.`
-                : `The keeper runner: ${outcomeText(recorded)}, ${formatAge(new Date(recorded.at))}.`
-              : "The keeper runner has recorded no payout of it yet."}
-      </span>
+      <span className={styles.slotKeeper}>{keeperLine(slot, keeper)}</span>
     </div>
   );
 }

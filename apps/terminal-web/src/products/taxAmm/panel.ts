@@ -9,7 +9,13 @@
 // treasury, the slot numbers) come from the program's IDL, so the panel restates none of them.
 import { getBase64Encoder, type Address } from "@solana/kit";
 import { BURN_SLOT, getTaxMarketDecoder, getTaxMarketSize, SUITE_SLOT, SUITE_TREASURY, TAX_MARKET_DISCRIMINATOR, type TaxMarket } from "tax-amm-scripts/client/index.ts";
+import type { MarketKeeper } from "terminal-api/contract";
+import { formatAge } from "@/format";
+import { outcomeText, waitingReason } from "@/keeperText";
 import { DEFAULT_ADDRESS, splitOf, type SlotWho, type SplitPart } from "./split";
+
+/** The keeper runner's answer for the market as the panel holds it: still loading, failed, or loaded. */
+export type KeeperRead = { status: "loading" } | { status: "failed" } | { status: "loaded"; data: MarketKeeper };
 
 /** A slot that can be paid out: what it is owed, and the payout action with the inputs the metadata's action takes. */
 export type PayableSlot = { slot: number; who: SlotWho; wallet: Address | null; owed: bigint; action: "distribute" | "burn"; inputs: { tax_mint: Address; recipient: Address } };
@@ -90,4 +96,20 @@ export function taxPanelView({ state: data, slot, vaults }: { state: string | nu
     virtual: state.virtualReserve > 0n ? { side: state.virtualSide, amount: state.virtualReserve } : null,
     vaults: vaults.map(tokenAccountAmount),
   };
+}
+
+/**
+ * What the keeper runner makes of a slot, from `GET /v1/markets/{market}/keeper` (PIPESCOPE-164): a slot
+ * owed anything is due by the runner's own rule, with its last attempt at it; a slot owed nothing is not.
+ */
+export function keeperLine(slot: PayableSlot, keeper: KeeperRead, now?: Date): string {
+  if (keeper.status === "loading") return "Reading the keeper runner's records…";
+  if (keeper.status === "failed") return "The keeper runner's records could not be read.";
+  const due = keeper.data.due.find((d) => d.job === "distribute" && d.slot === slot.slot);
+  if (!due) return slot.owed > 0n ? "The keeper runner did not count it due when it was read." : "The keeper runner has nothing to pay: it is owed nothing.";
+  if (!keeper.data.records.ok) return "The keeper runner counts it due; its records could not be read.";
+  const last = due.last;
+  if (!last) return "The keeper runner counts it due and has not tried it yet.";
+  const said = last.outcome === "held" || last.outcome === "parked" ? waitingReason(last) : outcomeText(last);
+  return `The keeper runner: ${said}, ${formatAge(new Date(last.at), now)}.`;
 }

@@ -196,7 +196,7 @@ describe("trades", () => {
   });
 });
 
-describe("a strategy's own reserves as its liquidity (PIPESCOPE-166)", () => {
+describe("a strategy's own reserves as its liquidity (PIPESCOPE-168)", () => {
   it("shows a tax market's real reserves as its liquidity, not what its vaults hold with the tax owed, and filters on them", async () => {
     const { db, close } = createDb(database.url);
     try {

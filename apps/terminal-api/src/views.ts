@@ -24,7 +24,7 @@ export async function marketViews(database: Db, rows: MarketRow[]): Promise<Mark
       position: marketMints.position,
       mint: marketMints.mint,
       vault: marketMints.vault,
-      // A strategy's own reserve where Aviary reads one (a tax market's leaves out the tax owed, PIPESCOPE-166), else what the vault holds.
+      // A strategy's own reserve where Aviary reads one (a tax market's leaves out the tax owed, PIPESCOPE-168), else what the vault holds.
       liquidity: sql<string | null>`coalesce(${marketMints.reserve}, ${marketMints.vaultAmount})::text`,
       decimals: mints.decimals,
       flags: mints.flags,
