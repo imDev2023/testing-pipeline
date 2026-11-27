@@ -1,0 +1,1 @@
+ALTER TABLE "market_mints" ADD COLUMN "reserve" numeric(20, 0);

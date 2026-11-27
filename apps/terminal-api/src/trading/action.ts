@@ -18,7 +18,7 @@ import { buildActionInstruction, type AviaryAction } from "strategy-actions";
 import type { BalanceChange, TransactionSimulation } from "../contract";
 import { decodeFailure } from "./failure";
 import { transferHookProgram, type TradeMint } from "./market";
-import { fitTransaction, marketLookupTable, runSimulation, TooLarge, type LookupTable } from "./prepare";
+import { fitTransaction, lookupTables, runSimulation, TooLarge } from "./prepare";
 import { COMMITMENT, Refused } from "./quote";
 
 export type FormValues = { args: Record<string, ArgValue>; inputs: Record<string, Address> };
@@ -105,6 +105,18 @@ export async function actionTransaction(input: ActionInput): Promise<{ instructi
   return { ...(await aroundWrappedSol(main, trader, wrap, input.walletWrappedSol ?? "missing")), action: main };
 }
 
+/**
+ * The new market opened in the same transaction as it is created (PIPESCOPE-166): its mints and their
+ * vaults in the market's order, which the product's own form works out before the market exists, and
+ * the actions of its metadata to run on it once the router has created it and its fee accounts, such
+ * as the seed that opens a tax market for trading.
+ */
+export type Opening = {
+  mints: readonly Address[];
+  vaults: readonly Address[];
+  actions: readonly (FormValues & { action: AviaryAction })[];
+};
+
 export type CreateInput = FormValues & {
   init: MetadataInit;
   strategy: Address;
@@ -115,17 +127,65 @@ export type CreateInput = FormValues & {
   tokenPrograms?: Record<string, Address>;
   rpc?: Rpc<GetAccountInfoApi>;
   walletWrappedSol?: WrappedSol;
+  /** Opens the market in the same transaction: the router's fee account for each mint, then these actions. */
+  then?: Opening;
 };
 
-/** A new market as the instructions of its transaction: the router's `create_market` from the create form, with wrapped SOL handled as for an action. */
+/** The token program owning `mint`, from those given or read through `rpc`. */
+async function tokenProgramOf(mint: Address, tokenPrograms: Record<string, Address> | undefined, rpc: Rpc<GetAccountInfoApi> | undefined): Promise<Address> {
+  const known = tokenPrograms?.[mint];
+  if (known) return known;
+  if (!rpc) throw refusal("bad_input", `The token program of ${mint} is not known.`);
+  const { value } = await rpc.getAccountInfo(mint, { encoding: "base64", commitment: COMMITMENT, dataSlice: { offset: 0, length: 0 } }).send();
+  if (!value || (value.owner !== TOKEN_PROGRAM_ADDRESS && value.owner !== TOKEN_2022_PROGRAM_ADDRESS)) throw refusal("bad_input", `${mint} is not a mint of SPL Token or Token-2022.`);
+  return value.owner;
+}
+
+/**
+ * A new market as the instructions of its transaction: the router's `create_market` from the create
+ * form, with wrapped SOL handled as for an action; then, when asked to open it, the router's
+ * `init_fee_account` for each mint and the actions given, each built against the market as it will be
+ * once created and with its own wrapped SOL around it.
+ */
 export async function createMarketTransaction(input: CreateInput) {
-  const { init, strategy, trader, args, inputs, marketState, tokenPrograms, rpc } = input;
+  const { init, strategy, trader, args, inputs, marketState, tokenPrograms, rpc, then } = input;
   const { instruction, resolved } = await built(() =>
     buildCreateMarketFromMetadata({ init, strategyProgram: strategy, creator: trader, marketState, args, inputs, tokenPrograms, rpc, maxCreatorLamports: input.maxCreatorLamports }),
   );
   signedOnlyBy([instruction], resolved.marketStateSigns ? [trader, resolved.marketState] : [trader], "Creating this market");
+  const held = input.walletWrappedSol ?? "missing";
   const wrap = await built(() => wrappedSolOf(init.args, args, { strategyProgram: strategy, wallet: trader, marketState: resolved.marketState, inputs, tokenPrograms, rpc }));
-  return { ...(await aroundWrappedSol(instruction, trader, wrap, input.walletWrappedSol ?? "missing")), market: resolved.market, marketState: resolved.marketState, marketStateSigns: resolved.marketStateSigns };
+  const created = await aroundWrappedSol(instruction, trader, wrap, held);
+  const market = { market: resolved.market, marketState: resolved.marketState, marketStateSigns: resolved.marketStateSigns };
+  if (!then) return { ...created, ...market };
+
+  if (then.mints.length !== then.vaults.length) throw refusal("bad_input", "The new market needs one vault for each of its mints.");
+  const named = new Set(resolved.strategyAccounts.map((a) => a.address));
+  const vault = then.vaults.find((v) => !named.has(v));
+  if (vault) throw refusal("bad_input", `The new market's vault ${vault} is not one of the accounts its create form names.`);
+  const filled = new Set(Object.values(inputs));
+  const mint = then.mints.find((m) => !filled.has(m));
+  if (mint) throw refusal("bad_input", `The new market's mint ${mint} is not one the create form was filled with.`);
+  // The market's order: the vaults, and the mints the create form passes as accounts, in the order its accounts name them.
+  const accountOrder = resolved.strategyAccounts.map((a) => a.address);
+  const outOfOrder = (list: readonly Address[]) => {
+    const at = list.map((a) => accountOrder.indexOf(a)).filter((i) => i >= 0);
+    return at.some((i, k) => k > 0 && i < at[k - 1]!);
+  };
+  if (outOfOrder(then.vaults) || outOfOrder(then.mints)) throw refusal("bad_input", "The new market's mints and vaults are not in the order its create form names them.");
+
+  const programsOfMints = await Promise.all(then.mints.map((m) => tokenProgramOf(m, tokenPrograms, rpc)));
+  const view: MarketView = { market: resolved.market, strategyProgram: strategy, marketState: resolved.marketState, mints: then.mints, vaults: then.vaults, tokenPrograms: programsOfMints, supportsExactOut: false };
+  const feeAccounts = await Promise.all(then.mints.map((m, i) => initFeeAccount({ payer: trader, market: resolved.market, mint: m, tokenProgram: programsOfMints[i]! })));
+  const instructions = [...created.instructions, ...feeAccounts];
+  let wrapped = created.wrapped;
+  for (const step of then.actions) {
+    // After the router has created it, the account the market holds its wallet's wrapped SOL in exists only if the wallet held one before.
+    const action = await actionTransaction({ ...step, market: view, trader, tokenPrograms: { ...tokenPrograms, ...Object.fromEntries(then.mints.map((m, i) => [m, programsOfMints[i]!])) }, rpc, walletWrappedSol: held });
+    instructions.push(...action.instructions);
+    wrapped += action.wrapped;
+  }
+  return { instructions, wrapped, ...market };
 }
 
 /**
@@ -213,12 +273,12 @@ export function measureWallet(input: { trader: Address; watched: readonly Addres
  */
 export async function newMarketView(
   rpc: Rpc<SolanaRpcApi>,
-  input: { instructions: Instruction[]; trader: Address; market: Address; strategy: string },
+  input: { instructions: Instruction[]; trader: Address; market: Address; strategy: string; /** Aviary's own lookup table, when the deployment names one (PIPESCOPE-167). */ aviaryTable?: Address | null },
 ): Promise<{ ok: true; view: MarketView; mints: TradeMint[] } | { ok: false; simulation: TransactionSimulation }> {
-  const { value: lifetime } = await rpc.getLatestBlockhash({ commitment: COMMITMENT }).send();
+  const [{ value: lifetime }, tables] = await Promise.all([rpc.getLatestBlockhash({ commitment: COMMITMENT }).send(), lookupTables(rpc, { market: null, aviary: input.aviaryTable ?? null })]);
   let fitted;
   try {
-    fitted = fitTransaction(input.instructions, input.trader, lifetime, null);
+    fitted = fitTransaction(input.instructions, input.trader, lifetime, tables);
   } catch (e) {
     if (e instanceof TooLarge) throw refusal("too_large", "Creating this market needs more accounts than one transaction can carry.");
     throw e;
@@ -257,22 +317,22 @@ export async function newMarketView(
  */
 export async function prepareTransaction(
   rpc: Rpc<SolanaRpcApi>,
-  input: { instructions: Instruction[]; trader: Address; strategy: string; market: Address | null; what: string; hooks?: readonly string[] },
+  input: { instructions: Instruction[]; trader: Address; strategy: string; market: Address | null; what: string; hooks?: readonly string[]; /** Aviary's own lookup table, when the deployment names one (PIPESCOPE-167); none when left out. */ aviaryTable?: Address | null },
 ): Promise<{ transaction: string | null; simulation: TransactionSimulation }> {
   const { instructions, trader } = input;
   const writable = instructions.flatMap((i) => (i.accounts ?? []).filter((a) => a.role === AccountRole.WRITABLE || a.role === AccountRole.WRITABLE_SIGNER).map((a) => a.address));
   const watched = [...new Set([trader, ...writable])];
-  const [before, { value: lifetime }, table] = await Promise.all([
+  const [before, { value: lifetime }, tables] = await Promise.all([
     rpc.getMultipleAccounts(watched, { encoding: "base64", commitment: COMMITMENT }).send(),
     rpc.getLatestBlockhash({ commitment: COMMITMENT }).send(),
-    input.market ? marketLookupTable(rpc, input.market) : Promise.resolve<LookupTable | null>(null),
+    lookupTables(rpc, { market: input.market, aviary: input.aviaryTable ?? null }),
   ]);
   let fitted;
   try {
-    fitted = fitTransaction(instructions, trader, lifetime, table);
+    fitted = fitTransaction(instructions, trader, lifetime, tables);
   } catch (e) {
-    // A new market has recorded no lookup table yet, so its refusal names none.
-    if (e instanceof TooLarge) throw refusal("too_large", input.market ? e.message.replace(/^This swap/, input.what) : `${input.what} needs more accounts than one transaction can carry.`);
+    // A new market has recorded no lookup table yet, so without Aviary's its refusal names none.
+    if (e instanceof TooLarge) throw refusal("too_large", input.market || tables.length ? e.message.replace(/^This swap/, input.what) : `${input.what} needs more accounts than one transaction can carry.`);
     throw e;
   }
   const { value, networkFee } = await runSimulation(rpc, fitted.wire, fitted.messageBytes, watched, input.what);

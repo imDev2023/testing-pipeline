@@ -6,7 +6,7 @@ const config: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   // terminal-api's product readings import the programs' generated clients, TypeScript as written.
-  transpilePackages: ["terminal-api", "buy-wall-amm-scripts"],
+  transpilePackages: ["terminal-api", "buy-wall-amm-scripts", "tax-amm-scripts"],
   images: { unoptimized: true },
   // Next's dev badge would sit over the pages the end-to-end tests photograph.
   devIndicators: false,

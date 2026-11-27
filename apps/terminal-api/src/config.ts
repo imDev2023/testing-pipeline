@@ -292,6 +292,13 @@ export const MARKET_READ = { maxAccounts: 8, maxAccountBytes: 64 * 1024 } as con
 export const CREATE_MARKET_MAX_CREATOR_LAMPORTS = 100_000_000n;
 
 /**
+ * How many slots a transaction can still land in after it is built: a blockhash lasts 150 blocks, at most
+ * one a slot. A tax market's change of rates due within it sets the trade box's minimum output from the
+ * worse of the two quotes (docs/spec/tax-amm.md, "In Aviary"; ./trading/pendingRates).
+ */
+export const TRANSACTION_LIFETIME_SLOTS = 150;
+
+/**
  * The lending AMM in Aviary (#88; docs/spec/lending-pool.md, "Aviary's panel" and "Creation
  * parameters"): the create form's defaults, the one place they are written (LENDING-104), an LP fee
  * of 30 bps (0.30%) and `lent_index` 1, since the form takes the other mint first and the lent mint

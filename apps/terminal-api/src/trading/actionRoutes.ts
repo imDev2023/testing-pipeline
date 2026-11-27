@@ -3,8 +3,8 @@
 // their signatures waited on until they confirm; a mint typed into a create form, read for its facts;
 // and a market's state with named outside accounts read at one slot, for a product's panel. Prepares
 // and signatures count with quotes against the TRADES limit (PIPESCOPE-90); the reads are reads.
-import { PIPELINE_PROGRAM_ADDRESS } from "@pipeline-sol/sdk";
-import { AccountRole, address, createSolanaRpc, isAddress, type Address, type Instruction } from "@solana/kit";
+import { PIPELINE_PROGRAM_ADDRESS, TOKEN_2022_PROGRAM_ADDRESS } from "@pipeline-sol/sdk";
+import { AccountRole, address, createSolanaRpc, getBase64Encoder, isAddress, type Address, type Instruction, type Rpc, type SolanaRpcApi } from "@solana/kit";
 import type { AviaryAction } from "strategy-actions";
 import { eq } from "drizzle-orm";
 import type { Context, Hono } from "hono";
@@ -12,19 +12,19 @@ import { HTTPException } from "hono/http-exception";
 import { createDb, markets, type Db } from "terminal-db";
 import { readMintRows } from "terminal-indexer";
 import { CREATE_MARKET_MAX_CREATOR_LAMPORTS, MARKET_READ } from "../config";
-import { MarketRead, MintFacts, PrepareActionRequest, PreparedAction, PreparedMarket, PrepareMarketRequest, TransactionReport, TransactionSignature } from "../contract";
+import { MarketRead, MintFacts, PrepareActionRequest, PreparedAction, PreparedMarket, PrepareMarketRequest, TransactionReport, TransactionSignature, type MarketOpening } from "../contract";
 import { mintFactOf } from "../facts";
-import { actionDiscriminator, checkForm, initDiscriminator, readFormSource } from "../forms";
+import { actionDiscriminator, checkForm, initDiscriminator, readFormSource, type FormSource } from "../forms";
 import type { AppEnv } from "../index";
 import { indexer } from "../index";
 import { limitTrades } from "../rateLimits";
 import { keptImages } from "../tokenImages";
-import { actionTransaction, createAndSeedTransaction, createMarketTransaction, newMarketView, prepareTransaction, walletWrappedSol } from "./action";
+import { actionTransaction, createAndSeedTransaction, createMarketTransaction, newMarketView, prepareTransaction, walletWrappedSol, type Opening } from "./action";
 import { awaitTrade, TRANSACTION_WORDS } from "./fastPath";
 import { actionHookAccounts } from "./hooks";
-import { readMarketOnChain } from "./market";
-import { Refused } from "./quote";
-import { addressOf, bodyOf, refused } from "./routes";
+import { readMarketOnChain, transferHookProgram } from "./market";
+import { COMMITMENT, Refused } from "./quote";
+import { addressOf, aviaryTableOf, bodyOf, refused } from "./routes";
 
 /** The database, opened only around its reads and never held while the chain is asked or waited on. */
 async function withDb<T>(c: Context<AppEnv>, read: (db: Db) => Promise<T>): Promise<T> {
@@ -59,6 +59,40 @@ function seedActionOf(source: NonNullable<Awaited<ReturnType<typeof readFormSour
   if (!action) throw new HTTPException(404, { message: `This strategy describes no action named ${name} in its metadata.` });
   if (action.kind !== "add_liquidity") throw unprocessable(`${name} is not a seed: only an add_liquidity action can be sent with a new market.`);
   return action;
+}
+
+/**
+ * A new market's opening with each action found by name in the strategy's validated metadata, or
+ * refused as an action form would be; an action whose instruction the deployed program does not hold
+ * is refused before anything is built, since it could only fail.
+ */
+async function openingOf(opening: MarketOpening, source: FormSource): Promise<Opening> {
+  const { actions } = source;
+  if (!actions) throw unprocessable("This strategy has no action forms: its metadata is unavailable.");
+  if (!actions.result.ok) throw unprocessable("This strategy has no action forms: the actions its metadata describes failed their validator.");
+  const { actions: described } = actions.result;
+  const steps = [];
+  for (const step of opening.actions) {
+    const action = described.find((a) => a.name === step.action);
+    if (!action) throw new HTTPException(404, { message: `This strategy describes no action named ${step.action} in its metadata.` });
+    if (checkForm(await actionDiscriminator(action), source.list).reason === "not-in-program") throw unprocessable(`The deployed program has no instruction for the ${step.action} action its metadata describes, so the new market cannot run it as it opens.`);
+    steps.push({ action, args: step.args, inputs: checkedInputs(step.inputs) });
+  }
+  return { mints: opening.mints.map((m) => address(m)), vaults: opening.vaults.map((v) => address(v)), actions: steps };
+}
+
+/**
+ * Refuses to open a new market in its create transaction when one of its mints has a transfer hook: an
+ * opening action's transfers would need the hook's accounts, which are resolved from a market that
+ * exists (PIPESCOPE-154), and a hooked token is launched in steps of its own, such as a contained
+ * token's bind between its creation and its seed.
+ */
+async function refuseHookedOpening(rpc: Rpc<SolanaRpcApi>, mints: readonly Address[]) {
+  const { value } = await rpc.getMultipleAccounts([...mints], { encoding: "base64", commitment: COMMITMENT }).send();
+  value.forEach((account, i) => {
+    const hook = account && account.owner === TOKEN_2022_PROGRAM_ADDRESS ? transferHookProgram(new Uint8Array(getBase64Encoder().encode(account.data[0]))) : null;
+    if (hook) throw unprocessable(`The new market's mint ${mints[i]} has a transfer hook, ${hook}, so the market cannot be opened in the transaction that creates it: create it, then run its actions in transactions of their own.`);
+  });
 }
 
 /**
@@ -97,7 +131,7 @@ export async function prepareActionResponse(c: Context<AppEnv>, request: Prepare
     const instruction = hooks.length ? { ...built.action, accounts: [...(built.action.accounts ?? []), ...hooks] } : built.action;
     const instructions = [...(before ? await before({ rpc, market, action }) : []), ...built.instructions.map((i) => (i === built.action ? instruction : i))];
     const hookPrograms = market.mints.flatMap((m) => (m.transferHook ? [m.transferHook] : []));
-    const prepared = await prepareTransaction(rpc, { instructions, trader, strategy, market: market.address, what: "This action", hooks: hookPrograms });
+    const prepared = await prepareTransaction(rpc, { instructions, trader, strategy, market: market.address, what: "This action", hooks: hookPrograms, aviaryTable: aviaryTableOf(c.env) });
     return c.json(
       PreparedAction.parse({
         market: request.market,
@@ -126,16 +160,22 @@ export function actionRoutes(app: Hono<AppEnv>) {
     if (!source) throw new HTTPException(404, { message: "Aviary knows no strategy registered with Pipeline at this address." });
     if (!source.document) throw unprocessable("This strategy has no create form: its metadata is unavailable.");
     if (!source.init) throw unprocessable("This strategy has no create form: its metadata describes none.");
+    if (request.then && request.seed) throw unprocessable("A new market either opens with the actions in then or is seeded by seed; send one of them.");
+    // The actions a new market runs as it opens, from the strategy's validated metadata like any action form's.
+    const then = request.then && (await openingOf(request.then, source));
 
     // A seed sent with the new market is the strategy's own add_liquidity action, from its validated actions.
     const seedAction = request.seed ? seedActionOf(source, request.seed.action) : null;
     const seedInputs = request.seed ? checkedInputs(request.seed.inputs) : {};
 
     const rpc = createSolanaRpc(c.env.RPC_URL);
+    const aviaryTable = aviaryTableOf(c.env);
+    if (then) await refuseHookedOpening(rpc, then.mints);
     try {
       const trader = address(request.trader);
       const strategy = address(request.strategy);
       const built = await createMarketTransaction({
+        then,
         init: source.init,
         strategy,
         trader,
@@ -163,7 +203,7 @@ export function actionRoutes(app: Hono<AppEnv>) {
       if (seedAction && request.seed) {
         const seedCheck = checkForm(await actionDiscriminator(seedAction), source.list);
         // The market the seed is built on, as create_market leaves it: simulated alone first, its failure the answer when it fails.
-        const alone = await newMarketView(rpc, { instructions: built.instructions, trader, market: built.market, strategy });
+        const alone = await newMarketView(rpc, { instructions: built.instructions, trader, market: built.market, strategy, aviaryTable });
         if (!alone.ok) {
           return c.json(PreparedMarket.parse({ ...marketBase(), seed: { action: seedAction.name, check: seedCheck, accounts: [] }, transaction: null, simulation: alone.simulation }));
         }
@@ -174,7 +214,7 @@ export function actionRoutes(app: Hono<AppEnv>) {
         instructions = both.instructions.map((i) => (i === both.seed ? seed : i));
         seeded = { wrapped: both.wrapped, seed: { action: seedAction.name, check: seedCheck, accounts: accountsOf(seed) }, hooks: alone.mints.flatMap((m) => (m.transferHook ? [m.transferHook] : [])) };
       }
-      const prepared = await prepareTransaction(rpc, { instructions, trader, strategy, market: null, what: seeded ? "Creating and seeding this market" : "Creating this market", hooks: seeded?.hooks });
+      const prepared = await prepareTransaction(rpc, { instructions, trader, strategy, market: null, what: seeded ? "Creating and seeding this market" : "Creating this market", hooks: seeded?.hooks, aviaryTable });
       return c.json(PreparedMarket.parse({ ...marketBase(), ...(seeded ? { wrapped_sol: String(seeded.wrapped) } : {}), seed: seeded?.seed ?? null, ...prepared }));
     } catch (e) {
       if (e instanceof Refused) return refused(c, e);

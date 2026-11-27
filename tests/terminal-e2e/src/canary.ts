@@ -1,27 +1,37 @@
 // Canary's results in the end-to-end tests (#125). The suite's API runs without Canary's container
 // (playwright.config.ts), so the pages' Canary parts are drawn from real records: every latest result
-// of six devnet markets from Canary's sweep of 2026-11-23 (apps/terminal-api/test/fixtures/
-// canary-records.json, which the API's own tests use too), stored as the `CanaryRun` objects store
-// them, each only under the strategy version it was run on.
+// of five devnet markets (fixtures/canary-records.json), stored as the `CanaryRun` objects store them,
+// each only under the strategy version it was run on. The records move with the recorded fixtures:
+// the outside builder's, the tax demo's and the sniper's are from Canary's sweep of 2026-11-23, the
+// stranded and refusing bonding-curve markets' from its run of 2026-11-27 on the curve's version of
+// slot 525,970,041, whose upgrade on 2026-11-25 stranded every older market of the curve (#75).
+// The API's and the web's own tests keep the 2026-11-23 sweep as it was (apps/terminal-api/test/
+// fixtures/canary-records.json), since they read no chain.
 //
 // On the recorded fixtures every one of those versions is the market's strategy's current version, so
 // a market whose version differs means the recording moved on: take the records again from a sweep of
 // the new recording's moment. On live devnet a strategy upgraded since is skipped, and says so, and a
 // market that already has results of its own, as on a local run with Canary's container, keeps them.
+//
+// The curve's upgrade stranded the only markets whose buyer could not sell back (the sweeps of
+// 2026-11-23 and 2026-11-24 found no other), so no page here shows the trade box's exit-test notice: the
+// market page reads Canary on the server, where no test can stand in for the API's answer. The notice is
+// covered by the web's own tests (test/canary.test.tsx, test/trade.test.ts), the API's wording of it
+// by test/canary-pages.test.ts, and the page itself by src/canary-devnet.spec.ts whenever devnet has one.
 import { readFileSync } from "node:fs";
 import { createDb, finishCanaryRun, programVersions, readCanaryLatest, startCanaryRun, storeCanaryMarket, type CanaryRecord } from "terminal-db";
 import { desc, eq } from "drizzle-orm";
 import { RPC_MODE } from "./target";
 
-const RECORDS = JSON.parse(readFileSync(`${import.meta.dirname}/../../../apps/terminal-api/test/fixtures/canary-records.json`, "utf8")) as Record<string, CanaryRecord[]>;
+const RECORDS = JSON.parse(readFileSync(`${import.meta.dirname}/../fixtures/canary-records.json`, "utf8")) as Record<string, CanaryRecord[]>;
 
-/** The six markets, by what each shows. */
+/** The five markets, by what each shows. */
 export const CANARY_MARKETS = Object.fromEntries(Object.entries(RECORDS).map(([label, records]) => [label, records[0]!.market])) as Record<
-  "open_curve" | "outside_builder" | "stranded" | "refusing" | "tax_demo" | "sniper",
+  "outside_builder" | "stranded" | "refusing" | "tax_demo" | "sniper",
   string
 >;
 /** The bonding curve's strategy, two of whose markets above are stranded and refusing. */
-export const CANARY_CURVE_STRATEGY = RECORDS.open_curve![0]!.strategy!;
+export const CANARY_CURVE_STRATEGY = RECORDS.refusing![0]!.strategy!;
 
 /** Stores the records of each market whose strategy's current version is the one they were run on. */
 export async function seedCanaryResults(): Promise<void> {

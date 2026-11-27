@@ -198,6 +198,50 @@ describe("POST /v1/markets/prepare", () => {
     expect((await post("/v1/markets/prepare", { strategy: MISSING, args: {}, inputs: {}, trader: TRADER })).status).toBe(404);
   });
 
+  describe("opening the new market in the same transaction (PIPESCOPE-166)", () => {
+    const then = (actions: unknown[]) => ({ mints: [MINT, MISSING], vaults: [RESERVE, ORACLE], actions });
+
+    it("answers 404 for an action the strategy's metadata does not describe, before anything is built", async () => {
+      const { status, body } = await post("/v1/markets/prepare", { strategy: TAX, args: {}, inputs: {}, trader: TRADER, then: then([{ action: "launch", args: {}, inputs: {} }]) });
+      expect(status).toBe(404);
+      expect((body as ApiError).error).toBe("This strategy describes no action named launch in its metadata.");
+    });
+
+    it("refuses more actions than a new market may run as it opens, and an opening without its vaults", async () => {
+      const seed = { action: "seed", args: {}, inputs: {} };
+      expect((await post("/v1/markets/prepare", { strategy: TAX, args: {}, inputs: {}, trader: TRADER, then: then([seed, seed, seed]) })).status).toBe(400);
+      expect((await post("/v1/markets/prepare", { strategy: TAX, args: {}, inputs: {}, trader: TRADER, then: { mints: [MINT, MISSING], actions: [] } })).status).toBe(400);
+    });
+
+    it("refuses to open a market whose mint has a transfer hook in the transaction that creates it, since its actions need the hook's accounts", async () => {
+      const hooked = "HooKedM1nt111111111111111111111111111111111";
+      const hookProgram = "aueUqJKZDZmb2vX3rJEn3ZfYQpx6DTxtfSWMccXdkjv";
+      // A Token-2022 mint: the classic 82 bytes, padding to 165, the account type, then a transfer hook extension (type 14) naming its program.
+      const data = new Uint8Array(166 + 4 + 64);
+      data.set(classicMint(), 0);
+      data[165] = 1;
+      new DataView(data.buffer).setUint16(166, 14, true);
+      new DataView(data.buffer).setUint16(168, 64, true);
+      data.set(getAddressEncoder().encode(hookProgram as Address), 170 + 32);
+      rpc.accounts.set(hooked, { owner: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb", data });
+      const { status, body } = await post("/v1/markets/prepare", { strategy: TAX, args: {}, inputs: {}, trader: TRADER, then: { mints: [hooked, MINT], vaults: [RESERVE, ORACLE], actions: [{ action: "seed", args: {}, inputs: {} }] } });
+      expect(status).toBe(422);
+      expect((body as ApiError).error).toBe(`The new market's mint ${hooked} has a transfer hook, ${hookProgram}, so the market cannot be opened in the transaction that creates it: create it, then run its actions in transactions of their own.`);
+    });
+
+    it("refuses an action input that is no address", async () => {
+      const { status, body } = await post("/v1/markets/prepare", { strategy: TAX, args: {}, inputs: {}, trader: TRADER, then: then([{ action: "distribute", args: {}, inputs: { recipient: "nobody" } }]) });
+      expect(status).toBe(400);
+      expect(JSON.stringify(body)).toContain("recipient");
+    });
+
+    it("refuses a new market sent both with actions to open it and with a seed, before anything is built", async () => {
+      const { status, body } = await post("/v1/markets/prepare", { strategy: TAX, args: {}, inputs: {}, trader: TRADER, then: then([{ action: "seed", args: {}, inputs: {} }]), seed: { action: "seed", args: {}, inputs: {} } });
+      expect(status).toBe(422);
+      expect((body as ApiError).error).toBe("A new market either opens with the actions in then or is seeded by seed; send one of them.");
+    });
+  });
+
   it("sends with a new market only a seed its strategy's metadata describes as add_liquidity (#57)", async () => {
     const unknown = await post("/v1/markets/prepare", { strategy: TAX, args: {}, inputs: {}, trader: TRADER, seed: { action: "nope", args: {}, inputs: {} } });
     expect(unknown.status).toBe(404);

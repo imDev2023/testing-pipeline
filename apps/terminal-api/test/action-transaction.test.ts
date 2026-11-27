@@ -4,10 +4,10 @@
 // unwrapped after it in the same transaction (PIPESCOPE-145), and nothing prepared that needs a
 // signature the wallet cannot give. Then what a simulation says signing would change in the wallet.
 import { readFileSync } from "node:fs";
-import { anchorDiscriminator, NATIVE_MINT_ADDRESS, PIPELINE_PROGRAM_ADDRESS, TOKEN_PROGRAM_ADDRESS, type MarketView, type MetadataInit } from "@pipeline-sol/sdk";
+import { anchorDiscriminator, feeAccountPda, NATIVE_MINT_ADDRESS, PIPELINE_PROGRAM_ADDRESS, TOKEN_PROGRAM_ADDRESS, type MarketView, type MetadataInit } from "@pipeline-sol/sdk";
 import { ASSOCIATED_TOKEN_PROGRAM_ADDRESS, findAssociatedTokenPda } from "@solana-program/token";
 import { SYSTEM_PROGRAM_ADDRESS } from "@solana-program/system";
-import { AccountRole, address, getAddressEncoder, getBase64Decoder, type Address, type Instruction } from "@solana/kit";
+import { AccountRole, address, getAddressEncoder, getBase64Decoder, getProgramDerivedAddress, getUtf8Encoder, type Address, type Instruction } from "@solana/kit";
 import { actionNamed, type AviaryAction } from "strategy-actions";
 import { describe, expect, it } from "vitest";
 import { actionTransaction, createMarketTransaction, measureWallet } from "../src/trading/action";
@@ -119,6 +119,48 @@ describe("createMarketTransaction", () => {
     expect(create!.accounts![0]).toEqual({ address: TRADER, role: AccountRole.WRITABLE_SIGNER });
     expect(create!.accounts![3]).toEqual({ address: state, role: AccountRole.WRITABLE_SIGNER });
     expect(create!.accounts![4]!.address).toBe(built.market);
+  });
+
+  describe("opening the new market in the same transaction", () => {
+    const state = address("Ewbh5n8pSFuq1ebQkLajDEFjXbX44m3ngPxznfjH1KtG");
+    const vaultOf = async (mint: Address) => (await getProgramDerivedAddress({ programAddress: TAX, seeds: [getUtf8Encoder().encode("vault"), getAddressEncoder().encode(state), getAddressEncoder().encode(mint)] }))[0];
+    const opening = async () => ({
+      mints: [NATIVE_MINT_ADDRESS, TOKEN],
+      vaults: [await vaultOf(NATIVE_MINT_ADDRESS), await vaultOf(TOKEN)],
+      actions: [{ action: actionNamed(TAX_METADATA, "seed"), args: { amount_0: "250000000", amount_1: "1000000", expected_terms: TERMS }, inputs: {} }],
+    });
+
+    it("adds the router's init_fee_account for each mint, then the actions built against the new market, with the seed's SOL wrapped around it", async () => {
+      const then = await opening();
+      const built = await createMarketTransaction({ init, strategy: TAX, trader: TRADER, marketState: state, args, inputs: { mint_0: NATIVE_MINT_ADDRESS, mint_1: TOKEN }, tokenPrograms, maxCreatorLamports: 100_000_000n, then });
+      // create_market, a fee account for each mint, then the seed: the wallet's wrapped-SOL account created, SOL moved in and synced, the seed, the account closed.
+      expect(programs(built.instructions)).toEqual([PIPELINE_PROGRAM_ADDRESS, PIPELINE_PROGRAM_ADDRESS, PIPELINE_PROGRAM_ADDRESS, ASSOCIATED_TOKEN_PROGRAM_ADDRESS, SYSTEM_PROGRAM_ADDRESS, TOKEN_PROGRAM_ADDRESS, TAX, TOKEN_PROGRAM_ADDRESS]);
+      expect(built.wrapped).toBe(250_000_000n);
+      for (const [i, mint] of then.mints.entries()) {
+        const fee = built.instructions[1 + i]!;
+        expect(Array.from(fee.data!.slice(0, 8))).toEqual(await disc("init_fee_account"));
+        expect(fee.accounts!.map((a) => a.address)).toContain(await feeAccountPda(built.market, mint, TOKEN_PROGRAM_ADDRESS));
+      }
+      const seed = built.instructions[6]!;
+      expect(Array.from(seed.data!.slice(0, 8))).toEqual(await disc("seed"));
+      expect(seed.accounts![1]).toEqual({ address: state, role: AccountRole.WRITABLE });
+      expect(seed.accounts!.slice(4, 6).map((a) => a.address)).toEqual(then.vaults);
+    });
+
+    it("refuses a new market whose vaults are not among the create form's accounts, or whose mints are not the form's", async () => {
+      const then = await opening();
+      const build = (t: typeof then) => createMarketTransaction({ init, strategy: TAX, trader: TRADER, marketState: state, args, inputs: { mint_0: NATIVE_MINT_ADDRESS, mint_1: TOKEN }, tokenPrograms, maxCreatorLamports: 100_000_000n, then: t }).catch((e: unknown) => e);
+      const wrongVault = await build({ ...then, vaults: [then.vaults[0]!, OTHER] });
+      expect((wrongVault as Refused).failure).toMatchObject({ class: "bad_input", sentence: `The new market's vault ${OTHER} is not one of the accounts its create form names.` });
+      const wrongMint = await build({ ...then, mints: [NATIVE_MINT_ADDRESS, OTHER] });
+      expect((wrongMint as Refused).failure).toMatchObject({ class: "bad_input", sentence: `The new market's mint ${OTHER} is not one the create form was filled with.` });
+      const swapped = await build({ ...then, vaults: [then.vaults[1]!, then.vaults[0]!] });
+      expect((swapped as Refused).failure).toMatchObject({ class: "bad_input", sentence: "The new market's mints and vaults are not in the order its create form names them." });
+      const reversed = await build({ ...then, mints: [TOKEN, NATIVE_MINT_ADDRESS] });
+      expect((reversed as Refused).failure).toMatchObject({ class: "bad_input" });
+      const uneven = await build({ ...then, vaults: [then.vaults[0]!] });
+      expect((uneven as Refused).failure).toMatchObject({ class: "bad_input", sentence: "The new market needs one vault for each of its mints." });
+    });
   });
 
   it("asks for the new market state when the create form makes one", async () => {

@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { CanaryResults, CanaryRollup, type MarketCanary } from "terminal-api/contract";
 import { CanaryCell } from "@/components/canary/CanaryCell";
+import { ExitNotice } from "@/components/canary/MarketCanary";
 import { CanarySaw } from "@/components/canary/CanarySaw";
 import { Outcome } from "@/components/canary/Outcome";
 import { VersionCanary } from "@/components/canary/VersionCanary";
@@ -176,5 +177,25 @@ describe("What Canary saw on this version", () => {
   it("reads as pending after an upgrade", () => {
     const pending = { ...rollup("rollup_curve"), markets: 0, checks: {}, summary: null, upgrade: { deploy_slot: 200, upgraded_at: "2026-11-24T10:00:00.000Z" } };
     expect(textOf(renderToStaticMarkup(<VersionCanary rollup={pending} />))).toContain("Tests for this version are pending.");
+  });
+});
+
+// The exit-test notice above the trade box's button (PIPESCOPE-18, CANARY-21). Since the bonding curve's
+// upgrade of 2026-11-25 no devnet market shows it, so no recorded page of the end-to-end suite does (#75).
+describe("the exit-test notice", () => {
+  const sentences = answer("open_curve").could_not_sell_back.map((n) => n.sentence);
+
+  it("says each sentence the API wrote, with one unticked box, as a note marked for the trade box", () => {
+    const html = renderToStaticMarkup(<ExitNotice id="t-read" sentences={sentences} ticked={false} onTick={() => undefined} />);
+    expect(html).toMatch(/^<div class="[^"]*" data-canary="notice" role="note">/);
+    expect(textOf(html)).toBe(`${sentences[0]} I have read this`);
+    expect(textOf(html)).toMatch(/^In Canary's test on 23 Nov 2026, a wallet that bought 1 SOL or more could not sell back/);
+    expect(html).toContain('<label class="');
+    expect(html).toMatch(/<input id="t-read" type="checkbox"\/>/);
+  });
+
+  it("shows the box ticked once ticked, and nothing at all with no sentence", () => {
+    expect(renderToStaticMarkup(<ExitNotice id="t-read" sentences={sentences} ticked onTick={() => undefined} />)).toMatch(/<input id="t-read" type="checkbox" checked=""\/>/);
+    expect(renderToStaticMarkup(<ExitNotice id="t-read" sentences={[]} ticked={false} onTick={() => undefined} />)).toBe("");
   });
 });

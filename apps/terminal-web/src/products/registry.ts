@@ -7,9 +7,10 @@
 // other tickets). It reads the chain through the API's one-slot read of a market's state with the
 // outside accounts it names (`GET /v1/markets/{market}/state`, PIPESCOPE-146).
 //
-// Filled by the products' Aviary tickets: the lending AMM's (#88) and the buy wall AMM's (#57); the
-// tax AMM's (#75) and the containment hook's (#76) add theirs.
+// Filled by the products' Aviary tickets: the lending AMM's (#88), the buy wall AMM's (#57) and the
+// tax AMM's (#75); the containment hook's (#76) adds its own.
 import type { ComponentType } from "react";
+import { TAX_AMM_PROGRAM_ADDRESS } from "tax-amm-scripts/client/index.ts";
 import type { Market } from "terminal-api/contract";
 import { BUY_WALL_AMM_PROGRAM_ADDRESS } from "terminal-api/products/buy-wall";
 import { BuyWallCreate } from "./buyWall/BuyWallCreate";
@@ -19,8 +20,10 @@ import { LendingAmmCreate } from "./lendingAmm/LendingCreate";
 import { LENDING_FORMS, LendingAmmForms } from "./lendingAmm/LendingForms";
 import { LendingAmmPanel } from "./lendingAmm/LendingPanel";
 import { LENDING_AMM_PROGRAM } from "./lendingAmm/program";
+import { TaxLaunch } from "./taxAmm/TaxLaunch";
+import { TaxPanel } from "./taxAmm/TaxPanel";
 
-/** What one product adds to its markets' pages. */
+/** What one product adds to its markets' pages, and to the create-market page. */
 export type ProductPlace = {
   /** Its panel, between the trades and the explanation. */
   Panel?: ComponentType<{ market: Market }>;
@@ -38,4 +41,6 @@ export type ProductRegistry = Readonly<Record<string, ProductPlace>>;
 export const PRODUCT_PANELS: ProductRegistry = {
   [LENDING_AMM_PROGRAM]: { Panel: LendingAmmPanel, Forms: LendingAmmForms, replaces: LENDING_FORMS, Create: LendingAmmCreate },
   [BUY_WALL_AMM_PROGRAM_ADDRESS]: { Panel: BuyWallPanel, Forms: BuyWallForms, replaces: BUY_WALL_FORMS, Create: BuyWallCreate },
+  // The tax AMM (docs/spec/tax-amm.md, "In Aviary"): the tax panel and the launch form; its five custom actions are the generic forms'.
+  [TAX_AMM_PROGRAM_ADDRESS]: { Panel: TaxPanel, Create: TaxLaunch },
 };

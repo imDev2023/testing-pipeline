@@ -1,7 +1,7 @@
 // The trading path's endpoints (docs/spec/pipescope-architecture.md, Trading path): the fees, a
 // quote while the trader types, a swap prepared and simulated, and a trade's signature (the fast
 // path). Quotes, prepares and signatures count together against the TRADES limit (PIPESCOPE-90).
-import { address, createSolanaRpc, isAddress } from "@solana/kit";
+import { address, createSolanaRpc, isAddress, type Address } from "@solana/kit";
 import { eq } from "drizzle-orm";
 import type { Context, Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
@@ -38,6 +38,14 @@ export async function bodyOf<T extends z.ZodType>(c: Context<AppEnv>, schema: T)
   const parsed = schema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) throw new HTTPException(400, { message: `The request is not one this endpoint takes: ${parsed.error.issues.map((i) => `${i.path.join(".") || "body"} ${i.message}`).join("; ")}.` });
   return parsed.data;
+}
+
+/** Aviary's own lookup table, when this deployment names one (`AVIARY_LOOKUP_TABLE`, PIPESCOPE-167). */
+export function aviaryTableOf(env: { AVIARY_LOOKUP_TABLE?: string }): Address | null {
+  const named = env.AVIARY_LOOKUP_TABLE?.trim();
+  if (!named) return null;
+  if (!isAddress(named)) throw new Error(`AVIARY_LOOKUP_TABLE is ${named}, which is no address.`);
+  return named;
 }
 
 /** A refusal from the strategy or the chain, as a 422 with the failure decoded. */
@@ -84,6 +92,7 @@ export function tradingRoutes(app: Hono<AppEnv>) {
         typed,
         slippageBps: request.slippage_bps,
         trader: address(request.trader),
+        aviaryTable: aviaryTableOf(c.env),
       });
       return c.json(PreparedSwap.parse(prepared));
     } catch (e) {

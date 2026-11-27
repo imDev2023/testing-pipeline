@@ -2790,6 +2790,36 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Decided: 2026-11-24 in [Buy wall AMM: Aviary panel and forms](https://github.com/imDev2023/testing-pipeline/issues/57)
 
 
+### PIPESCOPE-166: A new market opened in the transaction that creates it
+
+- Question: How does a product's create form open its market in the same transaction that creates it?
+- Answer: `POST /v1/markets/prepare` takes `then`, the new market's mints and vaults in order as the product's form works them out, and adds the router's `init_fee_account` for each mint and up to two actions of the strategy's metadata by name, each built against the market as it will be, with its own wrapped SOL; vaults not among the create form's accounts and mints it was not filled with are refused.
+- Alternatives: A tax-AMM-only endpoint, which every product with a launch would repeat; the API working out the vaults from the metadata's account names, which no standard fixes.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Trading path](spec/pipescope-architecture.md#trading-path)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Tax AMM in Aviary: the launch form and the tax panel](https://github.com/imDev2023/testing-pipeline/issues/75)
+
+### PIPESCOPE-167: Aviary's own address lookup table
+
+- Question: How does a transaction too large as a legacy one fit when its market has recorded no lookup table, as a new market never has?
+- Answer: Aviary keeps one frozen lookup table per cluster of the accounts transactions pass and do not invoke (the router's event authority and config, wrapped SOL, the cluster's USDC, Token-2022, the rent sysvar and every strategy's record when it was made), named by `AVIARY_LOOKUP_TABLE`, on devnet `3s6YeCtZRoQ3i9MBTRUE5dQn6uvC7AK6qFr8B6oWZsyz`, and every prepared transaction may use it beside the market's own.
+- Alternatives: A table per launch made by the creator first, which is a second transaction; a table Aviary keeps extending, which would need a key Aviary holds.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Trading path](spec/pipescope-architecture.md#trading-path)
+- Changes by: runtime setting
+- Status: default
+- Decided: 2026-11-24 in [Tax AMM in Aviary: the launch form and the tax panel](https://github.com/imDev2023/testing-pipeline/issues/75)
+
+### PIPESCOPE-168: Liquidity from a strategy's own reserves
+
+- Question: What liquidity does Aviary show for a market whose vaults hold more than its liquidity?
+- Answer: The strategy's own reserve of each mint, read by the indexer from the market state at the slot it reads the vaults, by a reader keyed by the strategy's program (`packages/terminal-indexer/src/reserves.ts`), kept beside what the vault holds; the feed, the facts, Canary's part and the feed's liquidity filter show and filter on it where there is one, else on what the vault holds.
+- Alternatives: Reading the reserves only on the tax panel, which would leave the feed and the facts showing tax owed as liquidity; computing them when a page is served, which the feed's filter cannot do in SQL.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Indexer](spec/pipescope-architecture.md#indexer)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Tax AMM in Aviary: the launch form and the tax panel](https://github.com/imDev2023/testing-pipeline/issues/75)
+
 ## Canary checks (CANARY)
 
 ### CANARY-01: What Canary claims
@@ -4154,6 +4184,46 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: fixed on-chain once deployed
 - Status: default
 - Decided: 2026-11-22 in [Tax AMM: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/67)
+
+### TAX-60: The launch form
+
+- Question: What does Aviary's launch form for a tax market ask, and how does it send the launch?
+- Answer: The token as mint 0 and SOL or the cluster's USDC as mint 1, taxed in that quote mint unless the creator chooses the token, a buy and a sell tax with their ranges (3% and 5%, each free between 0 and `MAX_TAX_BPS`, by default), the creator's wallet or no one as tax authority, up to four recipients with the creator's wallet first, the burn's share, the seed and an optional virtual reserve on the quote side, sent as one transaction with the creator as seeder, shortened by Aviary's lookup table.
+- Alternatives: Sending the seed as a second transaction, which the hash of the terms makes safe but leaves a market created and unseeded when the second is never signed; any quote mint, which the generic create form still offers.
+- Specified in: [`docs/spec/tax-amm.md`, In Aviary](spec/tax-amm.md#in-aviary)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Tax AMM in Aviary: the launch form and the tax panel](https://github.com/imDev2023/testing-pipeline/issues/75)
+
+### TAX-61: How the launch form refuses a mint
+
+- Question: How does the launch form refuse a mint the mint rules refuse, before any signature?
+- Answer: By the simulation before the signature, which runs the program's own rules, so the refusal is the program's error naming its rule, followed by the mint and, for an extension, its Token-2022 name from the number the program logs; the form keeps no copy of the rules.
+- Alternatives: Checking the mint's extensions and authorities in the page, which would be a second copy of the allowlist that `programs/mint-rules` keeps once.
+- Specified in: [`docs/spec/tax-amm.md`, In Aviary](spec/tax-amm.md#in-aviary)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Tax AMM in Aviary: the launch form and the tax panel](https://github.com/imDev2023/testing-pipeline/issues/75)
+
+### TAX-62: What the tax panel shows
+
+- Question: What does the tax panel show, and from what?
+- Answer: From the one-slot read of the market state and its vaults: the rates in force at that slot with their ranges, a waiting change with its slot and the time left, the authority or that there is none or it renounced, the split with the suite share first, the tax collected and owed, a line and a payout button for each used recipient slot, the burn while it has a share or is owed, and the suite share, each line with what the keeper runner makes of it from `GET /v1/markets/{market}/keeper` (PIPESCOPE-164), then the real reserves, the virtual reserve and what the vaults hold.
+- Alternatives: Reading the panel from Aviary's indexed events, which would lag the chain and could miss a payout made elsewhere.
+- Specified in: [`docs/spec/tax-amm.md`, In Aviary](spec/tax-amm.md#in-aviary)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Tax AMM in Aviary: the launch form and the tax panel](https://github.com/imDev2023/testing-pipeline/issues/75)
+
+### TAX-63: Canary's warns on a market with a virtual reserve
+
+- Question: Which of Canary's warns may a tax market with a virtual reserve show besides those of every tax market?
+- Answer: `conformance`, when `pipeline-check`'s `quotes` sizes its large sale past the real reserve, which the program refuses, and `outside_supply`, both findings the spec already accepts for a virtual reserve (H036, H086), named in the tax AMM's Canary checks for such markets only.
+- Alternatives: Changing Canary's `conformance` to pass explicit amounts to `pipeline-check` on such markets, a Canary ticket of its own; holding the criterion to the markets #75 launched, which already meet it.
+- Specified in: [`docs/spec/tax-amm.md`, Canary checks](spec/tax-amm.md#canary-checks)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-24 in [Tax AMM in Aviary: the launch form and the tax panel](https://github.com/imDev2023/testing-pipeline/issues/75)
 
 ## Containment hook (HOOK)
 

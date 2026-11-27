@@ -3,6 +3,8 @@
 // shape are in ./theme.css; the name and fee label in ./brand.ts; fee rates, fee mints, the quote mint
 // rule and the Telegram handles are read from the API and never written here.
 
+import { MAX_TAX_BPS } from "tax-amm-scripts/client/index.ts";
+
 /** Aviary's API. Baked in at build time, so each environment is built against its own (the local run's by default). */
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8811";
 
@@ -84,3 +86,31 @@ export const SEARCH_EXAMPLES = [
   { query: "7BctW", what: "the start of a market's address" },
   { query: "dream", what: "part of a token's name, in any case" },
 ] as const;
+
+/**
+ * The tax AMM's launch form (docs/spec/tax-amm.md, "In Aviary"; PIPESCOPE-162): what its fields hold
+ * when it opens, each a default the creator changes. The token is paired with SOL and taxed in it, so
+ * recipients are paid in SOL rather than in the token they would sell; a 3% buy tax and a 5% sell
+ * tax, each free to move between 0 and the program's cap (`MAX_TAX_BPS`, read from its IDL); the
+ * creator's wallet as tax authority and its one recipient; no burn and no virtual reserve.
+ */
+export const TAX_LAUNCH_DEFAULTS = {
+  token: "",
+  quote: "sol",
+  taxedIn: "quote",
+  buyTax: "3",
+  sellTax: "5",
+  buyMin: "0",
+  buyMax: String(MAX_TAX_BPS / 100),
+  sellMin: "0",
+  sellMax: String(MAX_TAX_BPS / 100),
+  authority: "wallet",
+  recipients: [{ wallet: "", share: "100" }],
+  burnShare: "0",
+  virtualReserve: "",
+  seedToken: "",
+  seedQuote: "",
+} as const satisfies Record<string, unknown>;
+
+/** How long a slot lasts, about, for the time a pending change of a tax market's rates has left (devnet's 400 ms). */
+export const SLOT_MS_ESTIMATE = 400;

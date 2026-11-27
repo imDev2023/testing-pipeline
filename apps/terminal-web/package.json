@@ -16,6 +16,7 @@
     },
     "dependencies": {
         "@pipeline-sol/sdk": "catalog:",
+        "@solana-program/token-2022": "0.20.0",
         "@solana/kit": "8.6.0",
         "@solana/react": "8.6.0",
         "@wallet-standard/react": "1.0.3",
@@ -23,6 +24,7 @@
         "next": "16.4.6",
         "react": "19.3.1",
         "react-dom": "19.3.1",
+        "tax-amm-scripts": "workspace:*",
         "terminal-api": "workspace:*",
         "zod": "4.6.7"
     },

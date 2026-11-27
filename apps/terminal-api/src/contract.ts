@@ -843,6 +843,13 @@ export const PreparedSwap = z.object({
   quote: Quote,
   slippage_bps: z.number().int(),
   min_amount_out: Amount,
+  /**
+   * A change of the strategy's own rates due within the transaction's lifetime, which a swap signed now
+   * may land after (a tax market's, docs/spec/tax-amm.md "In Aviary"): the slot it applies from and the
+   * expected output at the new rates; the minimum is then set from the worse of the two quotes. Null
+   * when no such change is due.
+   */
+  pending_rates: z.object({ from_slot: z.number().int(), expected_out: Amount }).nullable().default(null),
   /** The unsigned transaction, base64, exactly as simulated; null when the simulation failed, so there is nothing to sign. */
   transaction: z.string().nullable(),
   simulation: Simulation,
@@ -885,6 +892,23 @@ export const PreparedAction = z.object({
 });
 export type PreparedAction = z.infer<typeof PreparedAction>;
 
+/** The most actions a new market may run in the transaction that creates it. */
+export const OPENING_ACTIONS_MAX = 2;
+
+/**
+ * A new market opened in the transaction that creates it (PIPESCOPE-166): its mints and their vaults in
+ * the market's order, as the product's own form works them out before the market exists, so the router's
+ * fee account for each mint is created, and then the actions of its metadata, by name, run on it.
+ */
+export const MarketOpening = z
+  .object({
+    mints: z.array(Address).min(2).max(4),
+    vaults: z.array(Address).min(2).max(4),
+    actions: z.array(z.object({ action: z.string().min(1).max(64), ...FormValues }).strict()).max(OPENING_ACTIONS_MAX),
+  })
+  .strict();
+export type MarketOpening = z.infer<typeof MarketOpening>;
+
 /**
  * `POST /v1/markets/prepare`: a new market from a strategy's create form. `market_state` is the new
  * market state's address when the form makes one: its keypair is made in the page, which signs with
@@ -892,11 +916,19 @@ export type PreparedAction = z.infer<typeof PreparedAction>;
  */
 /**
  * `POST /v1/markets/prepare`: a new market from a strategy's create form, for the wallet that will sign
- * it; with `seed`, the strategy's add_liquidity action by its metadata name, built on the new market and
- * sent in the same transaction after a fee account for each of its mints (#57).
+ * it. With `then`, the actions it runs as it opens, built on its mints and vaults as named (PIPESCOPE-166);
+ * with `seed`, the strategy's add_liquidity action by its metadata name, built on the market as a
+ * simulation of its creation leaves it, after a fee account for each of its mints (#57). One or the other.
  */
 export const PrepareMarketRequest = z
-  .object({ strategy: Address, ...FormValues, market_state: Address.optional(), trader: Address, seed: z.object({ action: z.string().min(1).max(64), ...FormValues }).strict().optional() })
+  .object({
+    strategy: Address,
+    ...FormValues,
+    market_state: Address.optional(),
+    trader: Address,
+    then: MarketOpening.optional(),
+    seed: z.object({ action: z.string().min(1).max(64), ...FormValues }).strict().optional(),
+  })
   .strict();
 export type PrepareMarketRequest = z.infer<typeof PrepareMarketRequest>;
 

@@ -68,7 +68,7 @@ describe("createAndSeedTransaction", () => {
     for (const tokenProgram of [TOKEN_PROGRAM_ADDRESS, TOKEN_2022_PROGRAM_ADDRESS]) {
       const built = await created(tokenProgram);
       const both = await createAndSeedTransaction({ create: built, view: viewOf(built, tokenProgram), seed: actionNamed(METADATA, "seed"), trader: TRADER, args: SEED, inputs: {} });
-      expect(fitTransaction(both.instructions, TRADER, LIFETIME, null).version).toBe("legacy");
+      expect(fitTransaction(both.instructions, TRADER, LIFETIME, []).version).toBe("legacy");
     }
   });
 

@@ -32,6 +32,7 @@
         "keeper-jobs": "workspace:*",
         "lending-amm-scripts": "workspace:*",
         "strategy-actions": "workspace:*",
+        "tax-amm-scripts": "workspace:*",
         "terminal-db": "workspace:*",
         "terminal-explainer": "workspace:*",
         "terminal-indexer": "workspace:*",

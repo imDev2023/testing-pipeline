@@ -29,7 +29,11 @@ const MARKET_OLD_ACTIONS = "EdMom6pkDgCgXZFSmrEadPRnZDEyqbAg9xDVKrnusSQT";
 const TAX_MARKET = "4oPAw2WtnusKZxW8aprTc1Ldk3MyhiQdBeRFmfGhFJ9c";
 const SUITE_TREASURY = "CbqE9TtDJf67xFnXybBrzV6Tg4Mw71hX2VhWcm4R9VZF";
 const TAX_AMM = "J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t";
+// Devnet's Counterflow strategy, whose metadata has a create form and which is none of ours.
+const COUNTERFLOW = "9jd6k8HQkcU2jxe2AcTZVLDGccbo3S8Py6e6E6Aee7QP";
 const WSOL_MINT = "So11111111111111111111111111111111111111112";
+// Aviary's image-check token (deployments/devnet-demo-token-image.json), which the tax AMM's launch form reads.
+const TOKEN_IMAGE_CHECK = "6jtEmUreNsX6B7xwnqjB4D3bSASwTZTweL16bk8xHD7D";
 // A market no swap has gone through, and one with a single swap, whose lone candle the chart still draws.
 const MARKET_WITHOUT_TRADES = "DH7QCdTHGsjHcsm7SgXYRgdQvX34VT8oMQkFWVoCe3SQ";
 const MARKET_WITH_ONE_TRADE = "7Vh9qtYfzaiu4nYwQGaBBZ4JpB1cXM4MoJakjXcpVLcz";
@@ -115,6 +119,38 @@ const actionReviewed = (label: string, inputs: Record<string, string>, args: Rec
   await form.scrollIntoViewIfNeeded();
 };
 
+/** The tax AMM's panel on a tax market's page (#75) has read the market: its rates, its slots and its liquidity. */
+const taxPanelReady = (then: "read" | "payout") => async (page: Page) => {
+  await marketReady("chart")(page);
+  const panel = page.getByRole("region", { name: "Taxes" });
+  await expect(panel.getByText(/^Read from the market's state at slot [\d,]+\./)).toBeVisible();
+  for (const part of ["Rates", "Where every tax goes", "Collected and owed", "Liquidity"]) await expect(panel.getByRole("heading", { name: part, exact: true })).toBeVisible();
+  await expect(panel.getByText(/^The keeper runner/).first()).toBeVisible();
+  if (then === "read") return;
+  await connectTestWallet(page, page.getByRole("banner").getByRole("button", { name: "Connect wallet" }));
+  await panel.getByRole("button", { name: "Pay out the suite share" }).click();
+  const review = panel.getByRole("region", { name: "Review: pay out the suite share" });
+  await expect(review.getByText(/This is what signing would change in your wallet:$/)).toBeVisible({ timeout: 30_000 });
+  await expect(review.getByRole("button", { name: "Sign in wallet" })).toBeEnabled();
+  await review.scrollIntoViewIfNeeded();
+};
+
+/** The tax AMM's launch form on the create page (#75), filled with Aviary's image-check token against SOL: its facts and the whole split shown. */
+const taxLaunchFilled = async (page: Page) => {
+  const launch = page.getByRole("region", { name: "Launch a tax market" });
+  await connectTestWallet(page, page.getByRole("banner").getByRole("button", { name: "Connect wallet" }));
+  await launch.getByLabel("Its mint, by address").fill(TOKEN_IMAGE_CHECK);
+  await expect(launch.getByLabel("The token's facts")).toBeVisible();
+  await launch.getByLabel("Tax recipient 1's share, in percent").fill("60");
+  await launch.getByRole("button", { name: "Add a recipient" }).click();
+  await launch.getByLabel("Tax recipient 2", { exact: true }).fill(SUITE_TREASURY);
+  await launch.getByLabel("Tax recipient 2's share, in percent").fill("40");
+  await launch.getByLabel(/^Amount of /).first().fill("100000");
+  await launch.getByLabel("Amount of SOL").fill("0.5");
+  // The suite share and the two recipients; at narrow widths the table's head is hidden, so only rows with cells count.
+  await expect(launch.getByRole("table", { name: "The whole split of every tax, before you sign" }).getByRole("row").filter({ has: page.getByRole("cell") })).toHaveCount(3);
+  await expect(launch.getByRole("button", { name: "Simulate the launch" })).toBeEnabled();
+};
 
 /** The explanation panel, once it has loaded. */
 const explanation = async (page: Page) => {
@@ -281,15 +317,20 @@ const PAGES: { name: string; path: string; status: number; ready: (page: Page) =
       await expect(form.getByText("Enter the token's mint above to fill in the seed.")).toBeVisible();
     },
   },
+  // The tax AMM in Aviary (#75): the tax panel on its demo market, a slot's payout reviewed from it, and the launch form filled.
+  { name: "market-tax-panel", path: `/markets/${TAX_MARKET}`, status: 200, ready: taxPanelReady("read") },
+  { name: "market-tax-payout-review", path: `/markets/${TAX_MARKET}`, status: 200, ready: taxPanelReady("payout"), wallet: true },
+  { name: "create-tax-launch", path: `/create?strategy=${TAX_AMM}`, status: 200, ready: taxLaunchFilled, wallet: true },
   { name: "create", path: "/create", status: 200, ready: (page: Page) => expect(page.getByRole("region", { name: "Choose a strategy" }).getByRole("listitem").first()).toBeVisible() },
   {
+    // A strategy not ours, so its metadata's create form shows: devnet's Counterflow (our products show their own, PIPESCOPE-162).
     name: "create-form",
-    path: `/create?strategy=${TAX_AMM}`,
+    path: `/create?strategy=${COUNTERFLOW}`,
     status: 200,
     ready: async (page: Page) => {
       const form = page.getByRole("region", { name: "The create form" });
-      await form.getByRole("textbox", { name: /^mint_0 a mint/ }).fill(WSOL_MINT);
-      await expect(form.getByLabel("The facts of mint_0")).toBeVisible();
+      await form.getByRole("textbox", { name: /^quote_mint a mint/ }).fill(WSOL_MINT);
+      await expect(form.getByLabel("The facts of quote_mint")).toBeVisible();
     },
   },
   { name: "market-no-trades", path: `/markets/${MARKET_WITHOUT_TRADES}`, status: 200, ready: marketReady("none") },
@@ -303,21 +344,9 @@ const PAGES: { name: string; path: string; status: number; ready: (page: Page) =
   { name: "wallet", path: "/wallet", status: 200, ready: (page: Page) => expect(page.getByText(/^Connect a wallet to see what it holds that trades on Pipeline/)).toBeVisible() },
   { name: "wallet-connected", path: "/wallet", status: 200, ready: walletReady("connected"), wallet: true },
   { name: "wallet-unwrap-review", path: "/wallet", status: 200, ready: walletReady("unwrap"), wallet: true },
-  // Canary on the pages (#125): the open bonding curve's notice and tick, the outside builder's cost
-  // fail, a stranded market with no trade box, a market that refuses every trade, and a strategy's lines.
-  {
-    name: "market-canary-notice",
-    path: `/markets/${CANARY_MARKETS.open_curve}`,
-    status: 200,
-    ready: async (page: Page) => {
-      await marketReady("none")(page);
-      await canaryReady(page);
-      const notice = swapBox(page).locator('[data-canary="notice"]');
-      await expect(notice).toContainText(/^In Canary's test on \d{1,2} [A-Z][a-z]{2} \d{4}, a wallet that bought 1 SOL or more could not sell back/);
-      await expect(notice.getByRole("checkbox", { name: "I have read this" })).not.toBeChecked();
-      await unexplained(page);
-    },
-  },
+  // Canary on the pages (#125): the outside builder's cost fail, a stranded market with no trade box, a
+  // market that refuses every trade, and a strategy's lines. The exit-test notice has no market to show
+  // it on since the bonding curve's upgrade of 2026-11-25 (src/canary.ts).
   {
     name: "market-canary-cost-fail",
     path: `/markets/${CANARY_MARKETS.outside_builder}`,

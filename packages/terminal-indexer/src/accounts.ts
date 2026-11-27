@@ -9,6 +9,7 @@ import { address, getAddressDecoder, getAddressEncoder, getProgramDerivedAddress
 import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { marketMints, markets, mints, type Db } from "terminal-db";
 import { AUTHOR_TEXT_CAPS, authorText } from "terminal-explainer";
+import { reservesOf } from "./reserves";
 import { rpcCall } from "./rpc";
 
 /** Metaplex's Token Metadata program, whose PDA per mint holds most classic tokens' names. */
@@ -95,7 +96,7 @@ export function tokenName(fromMint: { name: string; symbol: string; uri: string 
  */
 export async function refreshMarkets(db: Db, rpcUrl: string, marketAddresses: string[]): Promise<{ mintsRead: number }> {
   if (!marketAddresses.length) return { mintsRead: 0 };
-  const known = await db.select({ address: markets.address, marketState: markets.marketState }).from(markets).where(inArray(markets.address, marketAddresses));
+  const known = await db.select({ address: markets.address, marketState: markets.marketState, strategy: markets.strategyProgram }).from(markets).where(inArray(markets.address, marketAddresses));
   if (!known.length) return { mintsRead: 0 };
   const addresses = known.map((m) => m.address);
 
@@ -123,6 +124,8 @@ export async function refreshMarkets(db: Db, rpcUrl: string, marketAddresses: st
   const held = await db.select().from(marketMints).where(inArray(marketMints.market, addresses));
   const vaults = held.flatMap((h) => (h.vault ? [h.vault] : []));
   const { slot, accounts } = await readAccounts(rpcUrl, [...known.map((m) => m.marketState), ...vaults]);
+  // A strategy whose vaults hold more than its liquidity has its own reserves read from the same state (./reserves).
+  const reserves = new Map(known.map((m) => [m.address, reservesOf(m.strategy, bytesOf(accounts.get(m.marketState) ?? null), held.filter((h) => h.market === m.address).length)]));
   await db.transaction(async (tx) => {
     for (const m of known) {
       const info = accounts.get(m.marketState) ?? null;
@@ -132,7 +135,8 @@ export async function refreshMarkets(db: Db, rpcUrl: string, marketAddresses: st
       if (!h.vault) continue;
       const data = bytesOf(accounts.get(h.vault) ?? null);
       const amount = data && data.length >= 72 ? String(u64At(data, 64)) : null;
-      await tx.update(marketMints).set({ vaultAmount: amount }).where(and(eq(marketMints.market, h.market), eq(marketMints.position, h.position)));
+      const reserve = reserves.get(h.market)?.[h.position] ?? null;
+      await tx.update(marketMints).set({ vaultAmount: amount, reserve: reserve === null ? null : String(reserve) }).where(and(eq(marketMints.market, h.market), eq(marketMints.position, h.position)));
     }
   });
 

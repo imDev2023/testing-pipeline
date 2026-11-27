@@ -392,6 +392,7 @@ From top to bottom, with the explanation beside the facts at desktop width.
 - A mint is entered by address, and its facts appear beneath the field as soon as it is read, so a creator sees what they are about to list.
 - After the market is created, the page links to its market page.
 - When no strategy has valid metadata, as on devnet on 2026-11-10, the page says so above the list: "No strategy on devnet has valid metadata today, so none offers a create form here. Their markets were created from their authors' own tools."
+- As built in [#75](https://github.com/imDev2023/testing-pipeline/issues/75): the tax AMM's own create form, in place of its metadata's (`PIPESCOPE-162`), is its launch form ([`tax-amm.md`](tax-amm.md), In Aviary).
 
 ## Search
 

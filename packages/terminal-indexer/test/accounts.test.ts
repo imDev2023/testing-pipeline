@@ -5,6 +5,7 @@ import { encodeAccount, getMarketCodec, PIPELINE_PROGRAM_ADDRESS } from "@pipeli
 import { address, getAddressEncoder } from "@solana/kit";
 import { eq, sql } from "drizzle-orm";
 import { createDb, marketMints, markets, mints, type Db } from "terminal-db";
+import { getTaxMarketEncoder, MarketStatus, type TaxMarketArgs } from "tax-amm-scripts/client/index.ts";
 import { createTestDatabase } from "terminal-db/testing";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { indexTransactions, metadataAddress, pipelineHandler, refreshMarkets, refreshMints, type RawTransaction } from "../src/index";
@@ -24,6 +25,45 @@ const AUTHORITY = "9rYtQM57An5FRiVMkE5aZVRMtq5i1uwN3iiAEjRoywCt";
 const DEFAULT = "11111111111111111111111111111111";
 
 const addressBytes = (a: string) => getAddressEncoder().encode(address(a));
+
+/** A tax market's state, seeded and open, with the reserves and owed amounts given. */
+function taxMarket({ reserves, owed }: { reserves: bigint[]; owed: bigint[] }): TaxMarketArgs {
+  const zero = address(DEFAULT);
+  return {
+    version: 1,
+    status: MarketStatus.Open,
+    taxSide: 1,
+    virtualSide: 0,
+    authorityBump: 255,
+    taxAuthorityRenounced: false,
+    mints: [address(TOKEN), address(WSOL)],
+    vaults: [address(VAULTS[0]!), address(VAULTS[1]!)],
+    marketSigner: address(MARKET),
+    buyTaxBps: 300,
+    sellTaxBps: 500,
+    buyTaxMinBps: 0,
+    buyTaxMaxBps: 1000,
+    sellTaxMinBps: 0,
+    sellTaxMaxBps: 1000,
+    taxAuthority: address(AUTHORITY),
+    seeder: address(AUTHORITY),
+    recipients: [address(AUTHORITY), zero, zero, zero],
+    shares: [10_000, 0, 0, 0],
+    burnShareBps: 0,
+    virtualReserve: 0n,
+    reserves,
+    owed,
+    taxCollected: owed.reduce((a, b) => a + b, 0n),
+    volume: [0n, 0n],
+    swapCount: 3n,
+    createdSlot: 525_100_000n,
+    createdAt: 1_795_000_000n,
+    pendingBuyTaxBps: 0,
+    pendingSellTaxBps: 0,
+    pendingFromSlot: 0n,
+    reserved: new Uint8Array(52),
+  };
+}
 
 /** A token account holding `amount`, as both token programs lay out its first 165 bytes. */
 function tokenAccount(mint: string, amount: bigint): Uint8Array {
@@ -127,6 +167,23 @@ it("reads the state and vaults again after the next event, and never the mints o
   expect(sol?.vaultAmount).toBe("31000000000");
   const asked = rpc.requests.flatMap((r) => (r.method === "getMultipleAccounts" ? (r.params[0] as string[]) : []));
   expect(asked).toEqual([STATE, ...VAULTS].sort());
+});
+
+it("keeps a tax market's real reserves beside what its vaults hold, since its tax-side vault also holds tax not yet paid out (PIPESCOPE-168)", async () => {
+  const state = getTaxMarketEncoder().encode(taxMarket({ reserves: [770_000_000_000_000n, 29_000_000_000n], owed: [400_000_000n, 0n, 0n, 0n, 0n, 100_000_000n] }));
+  rpc.accounts.set(STATE, { owner: STRATEGY, data: new Uint8Array(state) });
+  await refreshMarkets(client.db, rpc.url, [MARKET]);
+  const held = await client.db.select().from(marketMints).where(eq(marketMints.market, MARKET)).orderBy(marketMints.position);
+  expect(held.map(({ mint, vaultAmount, reserve }) => ({ mint, vaultAmount, reserve }))).toEqual([
+    { mint: TOKEN, vaultAmount: "774943493703585", reserve: "770000000000000" },
+    { mint: WSOL, vaultAmount: "31000000000", reserve: "29000000000" },
+  ]);
+
+  // A state its strategy's reader cannot decode, or a strategy with none, keeps no reserve: what the vault holds is its liquidity.
+  rpc.accounts.set(STATE, { owner: STRATEGY, data: Uint8Array.from([1, 2, 3, 4]) });
+  await refreshMarkets(client.db, rpc.url, [MARKET]);
+  const unread = await client.db.select({ reserve: marketMints.reserve }).from(marketMints).where(eq(marketMints.market, MARKET));
+  expect(unread.map((r) => r.reserve)).toEqual([null, null]);
 });
 
 it("keeps a mint whose account is missing as unreadable", async () => {
