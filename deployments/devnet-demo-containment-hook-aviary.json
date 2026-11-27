@@ -1,0 +1,263 @@
+{
+  "cluster": "devnet",
+  "at": "2026-11-27T19:55:41.367Z",
+  "outcome": "done",
+  "record": [
+    [
+      "containment hook program",
+      "aueUqJKZDZmb2vX3rJEn3ZfYQpx6DTxtfSWMccXdkjv"
+    ],
+    [
+      "tax AMM program",
+      "J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t"
+    ],
+    [
+      "create the quote mint, mint the launcher its supply and revoke its mint authority",
+      "7T6PJnHr8DCjEYtZkD1wXkK44nge9qQZGm9ZRQgK3NfHX1Yh7KgAa7FqakGNM7PRGEBNrFgw9UHJrfw5Nzhhhfs"
+    ],
+    [
+      "quote mint (--quote-mint new)",
+      "AsFVjoTckjT6uHixGsB88hwWpGnMXYLjVcCJQkxSyoMu"
+    ],
+    [
+      "token 1",
+      "quoted in AsFVjoTckjT6uHixGsB88hwWpGnMXYLjVcCJQkxSyoMu, goal 1000000000, deadline 1795811038, left contained"
+    ],
+    [
+      "create the mint and mint the supply",
+      "zKnQcxQzm81viQReqf9PzRLBiwZTXxXJFU3kVjjbdP9xU1UAnVhwZ6xN36EP9a1NejWNf14NaQAsqhJCbKXSkNj"
+    ],
+    [
+      "bind in the creation transaction",
+      "no: 1275 of 1232 bytes (689 with a lookup table), so bind went in the next one"
+    ],
+    [
+      "create_market + init_fee_account x2",
+      "ApWg49xN1Bi8szC5jaWtF9hU3qDemKLaijvLDKZMZaHaGSuPtiTwfoMrgFo56bUmC6wJqpi46MXh2y6mThYtv68"
+    ],
+    [
+      "bind",
+      "3acZf4YAM8H66LtQ7W2T8CZ6q1v3ZVj85ophJFf1hJ3VGBb34au14pN1mbmqr6QfHKtJQukN7pJ7mGSBodPHHzWt"
+    ],
+    [
+      "mint",
+      "CZBmorSG2sf69MwCE2fTnQCUrqpWKPP6cWQWwgSE1iRe"
+    ],
+    [
+      "market",
+      "1MRcMZKLQWztmNFymjMqsXVBG4fkwkK3tmtd1FWZUti"
+    ],
+    [
+      "market state",
+      "8RmsXcrH85fsqTSUaiJ5wLinTqCeaStNr3xemCHAKrMo"
+    ],
+    [
+      "the token's vault",
+      "8TPSg2NaUG5GnF7TGYfQiXCvMjYekiAG3tttEdbdESU"
+    ],
+    [
+      "the token's fee account",
+      "CkzAAXvqCtP2NdP3cb2qUPp5BxG3RLVAEN5Wt7DdisTP"
+    ],
+    [
+      "the quote mint's fee account",
+      "7Jo41FDXKohhATmHQ4VANMXAzYBgZjsJc9JkGFfSyCGR"
+    ],
+    [
+      "config",
+      "6dPW5xjRidVPHvPHQPhiMUqtcQE19c4s8j3cvQxgnBvh"
+    ],
+    [
+      "validation account",
+      "A2HE2iCFtuZVDXy2U8qMrUtErTp3RMxiGD6LUvBiYJk7"
+    ],
+    [
+      "unlock PDA (hook authority)",
+      "ATYMpB3Bd52de9EDKGR7Bs8ZgSqaSE9utrTueaorRLHP"
+    ],
+    [
+      "revoke the mint authority",
+      "2WK5rdb4dYAYS79uU6aCLnhV58ab1bqYv2hcvhY22ZumBufgxXbSBW8HynC2rtk3WCE5bYiWQeQZPKQeSBsVwA6t"
+    ],
+    [
+      "config read back",
+      "market, market state, vault, fee account, quote mint, goal and deadline as expected"
+    ],
+    [
+      "seed",
+      "4qYbvtC9jHvDLE3isYxLcLW6hfwpvjEE2R8NxL3c3BqgBfmYi94VwDFKeLp7yyjnzpm7JabT4xt9kvFC7xJdaUBk"
+    ],
+    [
+      "seeded",
+      "1000000000000000 of the token into its vault, through the hook"
+    ],
+    [
+      "unlock before either",
+      "refused by the hook with UnlockNotDue"
+    ],
+    [
+      "swap 1000000 of the quote mint for the token",
+      "2GNw8F8t9k5wqe3P5Shc55b5B8KQx176hsjLZhAYhi8o9KteucS5PTrJ3QX2zX4mPsCFkok2LfWGFz8VH838vLtS"
+    ],
+    [
+      "buy",
+      "1000000 of the quote mint bought 32332287922 of the token, its quote; Execute 5676 CU"
+    ],
+    [
+      "swap 16166143961 of the token for the quote mint",
+      "3ocDvYrsAAUzTy29WMV8JSNmBPS5agmj7VfBAYi4eBHxTPARjoWH5dhPBWQkaGpzZj6ot7nMVSwfhgiL2Cc6Sk8F"
+    ],
+    [
+      "sell",
+      "16166143961 of the token sold, 460756 kept; fee 40415360 in the token into its fee account; Execute 5611 and 5614 CU"
+    ],
+    [
+      "create the treasury's token account",
+      "5hCjNYQwPiRz62oPcx8uGmyZDMWga3n9UVF1KHGwso4a5j5kUxSNePdPWcWQWt3UZ1qvcWSdhMYncMxNSog86xCu"
+    ],
+    [
+      "sweep_fees",
+      "CMoyavy7fQXy3t5V7mooULB3HAzsKLuisymvQBYHeDASVBrk1SniYA6YrWeTvyJ8MMKcwk6Mrga1w6dXsgurfJ7"
+    ],
+    [
+      "swept",
+      "40415360 of the token from the fee account to Pipeline's treasury, through the hook"
+    ],
+    [
+      "create another wallet's token account",
+      "23YUgXshmNkNJrsS3MnnrFDpg9TCikexuyKrWRE7marpkE7e3y1F2nYDMeYjPQ6V7E9oxMLBsg42sGZxtAUkeRRW"
+    ],
+    [
+      "a wallet-to-wallet transfer_checked (refused by the hook with TransferRefused)",
+      "39jwPL7pjsuQxhpQU25CpzSFAa1dE2cdVTA9dAXRCc4VxPL69aYnUn4bpw8QpbALiW4zpmhBBdR3NAZbTxvFPRGG"
+    ],
+    [
+      "create an integrator's token account",
+      "52b2FDrYtNQ5faoDhATYZvUmyLhTZmiGErByM6Ta7DmgC6FgwG2wmY7JgW95thLbPJaY7dW7DusMdzXyQtrMp8xT"
+    ],
+    [
+      "refused by the hook",
+      "a wallet-to-wallet transfer_checked, on chain, and a sell with an integrator fee above zero, in simulation"
+    ],
+    [
+      "token 2",
+      "quoted in AsFVjoTckjT6uHixGsB88hwWpGnMXYLjVcCJQkxSyoMu, goal 1200000, deadline 1795895638, left contained"
+    ],
+    [
+      "create the mint and mint the supply",
+      "53mDbNTPChLJ1i1GPBZMK9aqXa93ezAZ9pVQ8tbuY9j1AkQxMUU2Pv5PHgyn3pBM2ShrbaBiqa68Ru4rqnjAxUxR"
+    ],
+    [
+      "bind in the creation transaction",
+      "no: 1275 of 1232 bytes (689 with a lookup table), so bind went in the next one"
+    ],
+    [
+      "create_market + init_fee_account x2",
+      "3i6Dq8AAWktMkwu28tRCeKgBbV7FJjZ6ZzVZzXy48jH9QVsSLRsGw6BMf3TGMHKbQAjpw7NSH4QntJVkdeGjHAgh"
+    ],
+    [
+      "bind",
+      "32152PCLQHF7aFtYLtxFAERP8E446UiR393fkkXNmhNqLfdPRy3xuCzH9QYLFd8SNCX6Q8pp3QcER5vjoLTYSEFn"
+    ],
+    [
+      "mint",
+      "71UT1HcBf1VE6y6phQaVBy3GZgnijEvRJ2xPv4QGR99i"
+    ],
+    [
+      "market",
+      "EjGJbLaX8JzWwhrpw1dBBHipfAUSDX5VLQZ1h1VkhzxG"
+    ],
+    [
+      "market state",
+      "27P7Wov2RJUrHQaZ2qY26uhwTvyQTibbMX9gUD2bUWD8"
+    ],
+    [
+      "the token's vault",
+      "HpEmiUEkT25wy1jqZdkgL8jF9MG8XCnQpu5EE1z19YLV"
+    ],
+    [
+      "the token's fee account",
+      "EyQiVdWFRGZLwToJ44rSgUG9gvzyFkvUe2i2sdugP4cQ"
+    ],
+    [
+      "the quote mint's fee account",
+      "9k2gUTpHs6AdpEjywSM1TVpt5NgyV7X3PxpArAG9eEgA"
+    ],
+    [
+      "config",
+      "7TY9gmsbSMseSYg9c7nxYNSe8RVWz9aX1cxvdYfa18Fy"
+    ],
+    [
+      "validation account",
+      "FaxvcHQVz5YB21J7kr61ZQABM6D33Xuh3UeHAVKzhPZc"
+    ],
+    [
+      "unlock PDA (hook authority)",
+      "F1FtXfRSQxk3qicf8WR8d9poHy7nnCZ5eNiSLfEEJYdK"
+    ],
+    [
+      "revoke the mint authority",
+      "5moB8dGukhDa1pF1UexaeAfP8xAf7a7Wjb1NBA51N9sdtYvrDHNrwYChb7YBwRvcoYyvRHBDQxMW8CoJDzLjkZ5g"
+    ],
+    [
+      "config read back",
+      "market, market state, vault, fee account, quote mint, goal and deadline as expected"
+    ],
+    [
+      "seed",
+      "3U7BSg2AvPFgoNA8bF8ycpaNwuRhc97aDsk6BLZj7Z86ZRjBwhDuLGjjaFZFDzUW8zNguZfYbfVFf7Jx8wNk3xYg"
+    ],
+    [
+      "seeded",
+      "1000000000000000 of the token into its vault, through the hook"
+    ],
+    [
+      "unlock before either",
+      "refused by the hook with UnlockNotDue"
+    ],
+    [
+      "swap 1000000 of the quote mint for the token",
+      "5RsGM9qfuXTuLhF3GYoEh2nfn1cWEtqSCXGjoDBZ76cKkAfhthiPdMp6dJmPYD3yxSGPt4Rcx4NxfJcUbiAn3Twc"
+    ],
+    [
+      "buy",
+      "1000000 of the quote mint bought 32332287922 of the token, its quote; Execute 5676 CU"
+    ],
+    [
+      "swap 16166143961 of the token for the quote mint",
+      "4V44UY9SHb5SKNnfXdEa21z3mCKbnq5NzFFaWGmBGwBNkYmb4M8fe6Kp5quqSnotNyuDTWr9Ar56B6LSynGGLZqa"
+    ],
+    [
+      "sell",
+      "16166143961 of the token sold, 460756 kept; fee 40415360 in the token into its fee account; Execute 5611 and 5614 CU"
+    ],
+    [
+      "create the treasury's token account",
+      "5D4JDt9hCf1exGap9xFronE8LarVCVad9DjiUgG92r78C2t4zigGESEdyjK23aUAYvXodgQWx7Zh5pvmWVUCgeMc"
+    ],
+    [
+      "sweep_fees",
+      "5eyY1QCsR65SYGb1ShpKbTa4VWw1H93BPYUiHwqHfxdEM3fAYQjGRLNXyDb3RxK1Dom1hoYnHXBG2iaQVwU63wia"
+    ],
+    [
+      "swept",
+      "40415360 of the token from the fee account to Pipeline's treasury, through the hook"
+    ],
+    [
+      "create another wallet's token account",
+      "1TTL4LzUzBa4Jo94KFBz6w8DLZbUK42zKV4n7XpLVVTLDxaf2g9D1UbfamUtdD29GzteTbiAYZEdPmen7r1m4Pc"
+    ],
+    [
+      "a wallet-to-wallet transfer_checked (refused by the hook with TransferRefused)",
+      "2cJcVM28V7MdUDzQKcfYK4hSDj5GypeZy9p2ZQkU7RBty6jYuetGALbKYk2knSdgwZ5eX84Gtkr8kd1rjxksxBa"
+    ],
+    [
+      "create an integrator's token account",
+      "4xpmtcsCegdhimmLSpVQ11iELqJC2Fdi3Y1VWZavnJRsseNmZxRuLksTvUysX7JVXVJHLwFJs9yPKLEr3ofSdVMR"
+    ],
+    [
+      "refused by the hook",
+      "a wallet-to-wallet transfer_checked, on chain, and a sell with an integrator fee above zero, in simulation"
+    ]
+  ]
+}

@@ -1,0 +1,24 @@
+6WkkrnCf mint Fx78hi14 results 17 last_run 2026-11-27T20:28:26.000Z fails [] warns ['cost', 'exit_queue', 'conformance'] notice 0
+   exit_transferred pass | A second wallet sent the tokens bought for 0.01 SOL got back 91.4% (0.010025 SOL in, 0.009169045 SOL back), as the buyer selling them did (91.4%); that return is the market's own, which cost reports.
+1MRcMZKL mint CZBmorSG results 17 last_run 2026-11-27T20:28:29.000Z fails [] warns ['cost', 'exit_queue', 'conformance'] notice 0
+   exit_transferred pass | A second wallet sent the tokens bought for 1 tokens got back 91.6% (1.0025 tokens in, 0.919201 tokens back), as the buyer selling them did (91.6%); that return is the market's own, which cost reports.
+7Vh9qtYf mint 5iEQzUi2 results 17 last_run 2026-11-27T20:28:33.000Z fails [] warns ['cost', 'exit_queue', 'outside_supply', 'conformance'] notice 0
+   exit_transferred pass | A second wallet sent the tokens bought for 0.01 SOL got back 91.4% (0.010025 SOL in, 0.009169046 SOL back), as the buyer selling them did (91.4%); that return is the market's own, which cost reports.
+EjGJbLaX mint 71UT1HcB results 17 last_run 2026-11-27T20:28:37.000Z fails ['exit_sizes'] warns ['cost', 'exit_queue', 'conformance'] notice 1
+   exit_transferred pass | A second wallet sent the tokens bought for 0.002151 tokens got back 91.6% (0.002157 tokens in, 0.001976 tokens back), as the buyer selling them did (91.6%); that return is the market's own, which cost reports.
+6eqVrhno mint 2e1iecsW results 17 last_run 2026-11-27T20:28:40.000Z fails [] warns ['cost', 'exit_transferred', 'exit_queue', 'token_authorities', 'outside_supply', 'contained_mint', 'conformance'] notice 0
+   exit_transferred warn | The token could not be sent to another wallet: its transfer hook aueUqJKZDZmb2vX3rJEn3ZfYQpx6DTxtfSWMccXdkjv refused (TransferRefused: A contained token can't be transferred there); the buyer got back 91.6% (1.0025 token
+7jJmWiGV mint AQSAyaGK results 17 last_run 2026-11-27T20:28:44.000Z fails [] warns ['cost', 'exit_queue', 'outside_supply', 'conformance'] notice 0
+   exit_transferred pass | A second wallet sent the tokens bought for 0.01 SOL got back 91.4% (0.010025 SOL in, 0.009169046 SOL back), as the buyer selling them did (91.4%); that return is the market's own, which cost reports.
+EqZP1ZkD mint F7M6PLwZ results 17 last_run 2026-11-27T20:28:48.000Z fails [] warns ['cost', 'exit_queue', 'outside_supply', 'conformance'] notice 0
+   exit_transferred pass | A second wallet sent the tokens bought for 0.01 SOL got back 91.4% (0.010025 SOL in, 0.009169046 SOL back), as the buyer selling them did (91.4%); that return is the market's own, which cost reports.
+9xwRRiTk mint 64qicrEz results 17 last_run 2026-11-27T20:28:52.000Z fails [] warns ['cost', 'exit_queue', 'outside_supply', 'conformance'] notice 0
+   exit_transferred pass | A second wallet sent the tokens bought for 0.01 SOL got back 91.4% (0.010025 SOL in, 0.009169046 SOL back), as the buyer selling them did (91.4%); that return is the market's own, which cost reports.
+H4YkGRjY mint 3atHKsak results 17 last_run 2026-11-27T20:28:56.000Z fails [] warns ['cost', 'exit_queue', 'conformance'] notice 0
+   exit_transferred pass | A second wallet sent the tokens bought for 0.01 SOL got back 91.4% (0.010025 SOL in, 0.009169046 SOL back), as the buyer selling them did (91.4%); that return is the market's own, which cost reports.
+4sN3upa1 mint EQoeDhoB results 17 last_run 2026-11-27T20:28:59.000Z fails [] warns ['cost', 'exit_queue', 'conformance'] notice 0
+   exit_transferred pass | A second wallet sent the tokens bought for 0.01 SOL got back 91.4% (0.010025 SOL in, 0.009169046 SOL back), as the buyer selling them did (91.4%); that return is the market's own, which cost reports.
+8kiwknCn mint FvsouVQ3 results 17 last_run 2026-11-27T20:29:03.000Z fails [] warns ['cost', 'exit_queue', 'outside_supply', 'conformance'] notice 0
+   exit_transferred pass | A second wallet sent the tokens bought for 0.01 SOL got back 91.4% (0.010025 SOL in, 0.009169046 SOL back), as the buyer selling them did (91.4%); that return is the market's own, which cost reports.
+5syNVWcD mint 2mJB5AmT results 17 last_run 2026-11-27T20:29:07.000Z fails [] warns ['cost', 'exit_queue', 'conformance'] notice 0
+   exit_transferred pass | A second wallet sent the tokens bought for 0.01 SOL got back 91.4% (0.010025 SOL in, 0.009169046 SOL back), as the buyer selling them did (91.4%); that return is the market's own, which cost reports.
