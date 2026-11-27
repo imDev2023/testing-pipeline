@@ -8,13 +8,15 @@
 //! the spec section that explains it and the decision's block in `docs/decisions.md`
 //! change in one PR.
 
-/// The Canary version that produced a result (`harness` on every record). 0.3.1 since
+/// The Canary version that produced a result (`harness` on every record). 0.4.0 since
+/// Pipeline 0.4.0, whose router refuses a swap whose fee transfers lower the trader's output
+/// by more than a fee charged in it, as the direct swap now does (`CANARY-45`). 0.3.1 since
 /// 2026-11-23: traders' Token-2022 accounts carry the immutable owner extension and
 /// `conformance` counts `pipeline-check`'s trades the containment hook refuses for lack of it
 /// as known (`HOOK-47`), and the `outside_supply` check (`CANARY-47`). 0.3.0 since Pipeline
 /// 0.3, whose fee mints changed how `cost` values the sale's fee and how quotes compare with
 /// swaps.
-pub const HARNESS: &str = "canary/0.3.1";
+pub const HARNESS: &str = "canary/0.4.0";
 
 // ---------------------------------------------------------------------------------------
 // Units (not policy, but written only here so the policy grep has no false friends)

@@ -11,7 +11,7 @@ packages:
 # docs/spec/pipescope-architecture.md "Pipeline's packages"): its packages name it as
 # `catalog:`, and a move to a newer release is a PR of its own.
 catalog:
-  "@pipeline-sol/sdk": 0.3.0
+  "@pipeline-sol/sdk": 0.4.0
 
 # esbuild, the keeper runner's and wrangler's bundler, needs no install script: its binary
 # comes from its platform package. workerd, the runtime `wrangler dev` runs Aviary's Workers

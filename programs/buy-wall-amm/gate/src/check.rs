@@ -18,9 +18,8 @@
 //!
 //! A keeper job runs if this tree's rules say it is due or the deployed build ran it on the
 //! snapshot, so a candidate that narrows a rule cannot drop that job from its own test.
-//! A market the router never recorded is registered first, one it recorded before Pipeline
-//! 0.3's fee mints migrated, and a missing router fee account created, as anyone could, so
-//! such a market is checked like the rest.
+//! A market the router never recorded is registered first, and a missing router fee account
+//! created, as anyone could, so such a market is checked like the rest.
 //!
 //! Then, in a world of its own, the gate makes a market with the candidate ([`own_market`],
 //! `POOL4-53`): it readies the router as on devnet, creates and seeds the market through the
@@ -480,18 +479,6 @@ fn check_market(session: &mut Session, market_state: &Pubkey, mode: &Mode, steps
         Err(error) => return steps.fail(StepKind::ReadState, "read the market state", error),
     };
 
-    // A market the router recorded before Pipeline 0.3's fee mints can't be traded, or read
-    // with the 0.3 client, until it is migrated; anyone may migrate it, so the gate does.
-    if recorded_before_fee_mints(session, market_state) {
-        let result = migrate(session, market_state);
-        steps.record(
-            StepKind::Migrate,
-            "migrate_market (as anyone could)",
-            result,
-            |d| d,
-        );
-    }
-
     // A market the router never recorded (a wallet may seed one through
     // `pipeline_seed_liquidity` itself) is registered as anyone could, so it is checked like
     // the rest; if even that fails, every step that needs no router still runs.
@@ -780,29 +767,6 @@ fn market_info(session: &Session, view: &MarketView) -> Result<String, String> {
 /// Registers a market the router has no Market for, as anyone may: the router's
 /// `register_existing_market`, which asks the program's `pipeline_market_info`, and
 /// `init_fee_account` for both mints, from the gate's payer.
-/// A router `Market` account's length before Pipeline 0.3 appended `fee_mint_index`: the
-/// discriminator and 364 bytes of fields (the router's `MARKET_LEN_V1`).
-const MARKET_LEN_BEFORE_FEE_MINTS: usize = 8 + 364;
-
-/// Whether the router's `Market` for `market_state` exists in the layout from before fee
-/// mints, which `migrate_market` moves to the current one.
-fn recorded_before_fee_mints(session: &Session, market_state: &Pubkey) -> bool {
-    let market = pda::market(&session.program, market_state);
-    session.svm.get_account(&market).is_some_and(|account| {
-        account.owner == client::PROGRAM_ID
-            && account.data.len() == MARKET_LEN_BEFORE_FEE_MINTS
-            && account.data[..8] == client::account_discriminator("Market")
-    })
-}
-
-/// The router's `migrate_market` for `market_state`'s market, paid by the session's payer.
-fn migrate(session: &mut Session, market_state: &Pubkey) -> Result<String, String> {
-    let market = pda::market(&session.program, market_state);
-    let payer = session.payer.pubkey();
-    session.send(&[client::migrate_market(&payer, &market)], &[])?;
-    Ok("moved to the router's current Market layout with migrate_market".into())
-}
-
 fn register(
     session: &mut Session,
     market_state: &Pubkey,

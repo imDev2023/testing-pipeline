@@ -8,10 +8,20 @@ import { ROUTER_INSTRUCTION_DISCRIMINATORS } from "@pipeline-sol/sdk";
 import { getBase64Encoder, getCompiledTransactionMessageDecoder, getTransactionDecoder } from "@solana/kit";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PreparedSwap, Quote } from "terminal-api/contract";
+import { rpcUrl } from "./devnet";
 import { LocalApi } from "./localApi";
 
 const HOSTED = "https://pipeline-devnet.up.railway.app";
 const ROUTER = "PiPEf4fFBpYXCtgfiWgVWzZNXnq2wZ7bnXidJCTwf34";
+/** An account's lamports on devnet now, as the simulation just read it. */
+async function lamportsOf(account: string): Promise<bigint> {
+  const response = await fetch(rpcUrl(), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getBalance", params: [account, { commitment: "confirmed" }] }),
+  });
+  return BigInt(((await response.json()) as { result: { value: number } }).result.value);
+}
 /** Pipeline's example constant-product strategy's market of SOL and a plain token (docs/DEVNET.md in Pipeline's repo). */
 export const CP_MARKET = process.env.E2E_TRADE_MARKET ?? "3nWkYTqgJCcMV4S4DMrF77ZF27KA58nQSyZnNiPTZabe";
 const WSOL = "So11111111111111111111111111111111111111112";
@@ -107,12 +117,16 @@ describe.runIf(ready)("the trading path matches Pipeline's hosted API (PIPESCOPE
     expect(prepared.simulation.ok).toBe(true);
     // 0.1 SOL typed: exactly 0.1 SOL leaves the wallet for the swap in the simulation, and the wallet's
     // SOL falls by that, the network fee and the rent of the token account the swap creates for it.
+    // The swap wraps the SOL in the wallet's wrapped SOL account and closes it after, so an account
+    // the shared test wallet already held comes back whole, its wrapped SOL and its rent.
     const sim = prepared.simulation;
     expect(sim.paid).toBe("100000000");
     expect(sim.received).toBe(prepared.quote.expected_out);
     const sol = sim.changes.find((ch) => ch.mint === null)!;
     const rent = sim.new_accounts.reduce((n, a) => n + BigInt(a.rent), 0n);
-    expect(BigInt(sol.before) - BigInt(sol.after)).toBe(100_000_000n + BigInt(sim.network_fee) + rent);
+    const wrapped = sim.changes.find((ch) => ch.mint === WSOL && !sim.new_accounts.some((a) => a.account === ch.account));
+    const returned = wrapped ? await lamportsOf(wrapped.account) : 0n;
+    expect(BigInt(sol.before) - BigInt(sol.after)).toBe(100_000_000n + BigInt(sim.network_fee) + rent - returned);
     // The only account it may create and keep is the trader's for the token, on their first buy of it.
     expect(sim.new_accounts.every((a) => a.mint === TOKEN)).toBe(true);
     const theirs = await hosted<{ transaction: string }>("/v1/swap-transaction", {

@@ -3264,11 +3264,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### CANARY-45: What the direct swap refuses
 
 - Question: Which of the router's rules does the swap implementation that calls the strategy directly keep?
-- Answer: Those a trader can meet: a trader account that is not a token account of its mint, a swap that lowers the trader's output balance (`OutputDecreased`, since Pipeline `3fd85ce`), and every refusal of Pipeline's settlement code, named in that code's words since the router's error numbers are not published under Apache-2.0; any refusal undoes the swap, and the strategy runs one call level higher than under the router. The router has had no pause since Pipeline 0.2.0.
-- Alternatives: The earlier default, with a paused router among the refusals, before Pipeline 0.2.0 removed the pause and `3fd85ce` added the output-balance rule; settling without the router's rules, so a swap the router refuses would look tradable.
+- Answer: Those a trader can meet: a trader account that is not a token account of its mint, a swap that lowers the trader's output balance (`OutputDecreased`, since Pipeline `3fd85ce`), or whose fee transfer, whose transfer hook runs after the swap was measured, leaves the trader with less output than measured minus a fee taken in it (since Pipeline 0.4.0), and every refusal of Pipeline's settlement code, named in that code's words since the router's error numbers are not published under Apache-2.0; any refusal undoes the swap, and the strategy runs one call level higher than under the router. The router has had no pause since Pipeline 0.2.0.
+- Alternatives: The earlier default, without the output read again after the fee transfer, which let a hook that empties the trader's output during Pipeline's fee look tradable once the 0.4.0 router refuses it; the default before it, with a paused router among the refusals, before Pipeline 0.2.0 removed the pause and `3fd85ce` added the output-balance rule; settling without the router's rules, so a swap the router refuses would look tradable.
 - Specified in: [`docs/spec/pipescope-canary.md`, Built on](spec/pipescope-canary.md#built-on)
 - Changes by: spec only
-- Status: changed 2026-11-19
+- Status: changed 2026-11-27
 - Decided: 2026-11-12 in [Aviary: Canary's control checks, token authorities acting, and transfer-hook accounts](https://github.com/imDev2023/testing-pipeline/issues/115)
 
 ### CANARY-46: The instruction list in the snapshot
@@ -5214,11 +5214,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### POOL4-47: Markets the router has not recorded
 
 - Question: What does the gate do with a market state the router has no Market for, or a market missing a router fee account?
-- Answer: The snapshot copies such a market as if the router had recorded what `pipeline_market_info` gives and saves it marked unregistered, and the replay registers it with the router's `register_existing_market` and `init_fee_account` for both mints, migrates a market the router recorded before Pipeline 0.3's fee mints with `migrate_market`, and creates any missing fee account of a recorded market, as anyone may, then checks it like the rest.
-- Alternatives: The earlier default, without the migration, under which the 0.3 router refuses every trade of a market recorded before fee mints and the gate took it for unrecorded; The earlier behaviour, aborting the whole run, which let anyone block every upgrade with one direct `pipeline_seed_liquidity` call; leaving such markets out of the check, which would not check them at all.
+- Answer: The snapshot copies such a market as if the router had recorded what `pipeline_market_info` gives and saves it marked unregistered, and the replay registers it with the router's `register_existing_market` and `init_fee_account` for both mints and creates any missing fee account of a recorded market, as anyone may, then checks it like the rest; since Pipeline 0.4.0 removed `migrate_market`, and no market on devnet was left in the layout from before fee mints, the replay no longer migrates one.
+- Alternatives: The earlier default, which also migrated a market the router recorded before Pipeline 0.3's fee mints with `migrate_market`, an instruction the 0.4.0 router no longer has; the default before it, without the migration, under which the 0.3 router refuses every trade of a market recorded before fee mints and the gate took it for unrecorded; The earlier behaviour, aborting the whole run, which let anyone block every upgrade with one direct `pipeline_seed_liquidity` call; leaving such markets out of the check, which would not check them at all.
 - Specified in: [`docs/spec/pool4-for-solana.md`, A release gate](spec/pool4-for-solana.md#a-release-gate)
 - Changes by: spec only
-- Status: changed 2026-11-22
+- Status: changed 2026-11-27
 - Decided: 2026-11-16 in [Buy wall AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/55)
 
 ### POOL4-48: A transfer hook at the seed
@@ -5606,11 +5606,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### LENDING-27: Compute ceilings
 
 - Question: How much compute may each instruction use?
-- Answer: Each instruction's highest measured cost plus headroom (`LENDING-88`): from 20,000 units for `pipeline_quote` to 140,000 for `pipeline_seed_liquidity`, with 35,000 for a swap without a redeem and 75,000 with one, 90,000 for `rebalance`, 60,000 for `add_liquidity` and 50,000 for `lock_lp`; raising one needs a written reason.
-- Alternatives: The earlier default, from 40,000 units for `lock_lp` to 200,000 for `pipeline_seed_liquidity`, set before measuring; before that, 20,000 units for `lock_lp`, set for one transfer.
+- Answer: Each instruction's highest measured cost plus headroom (`LENDING-88`): from 20,000 units for `pipeline_quote` to 145,000 for `pipeline_seed_liquidity`, with 40,000 for a swap without a redeem and 80,000 with one, 90,000 for `rebalance`, 60,000 for `add_liquidity`, 105,000 for a removal in cash and 85,000 in kind, and 50,000 for `lock_lp`; raising one needs a written reason.
+- Alternatives: The earlier default, with 140,000 for `pipeline_seed_liquidity`, 35,000 for a swap without a redeem, 100,000 for a removal in cash and 80,000 in kind, before Pipeline 0.4's `test-hook` made every transfer of a hooked test mint cost about 4,500 units more; the default before it, from 40,000 units for `lock_lp` to 200,000 for `pipeline_seed_liquidity`, set before measuring; before that, 20,000 units for `lock_lp`, set for one transfer.
 - Specified in: [`docs/spec/lending-pool.md`, Compute ceilings](spec/lending-pool.md#compute-ceilings)
 - Changes by: build-time constant
-- Status: changed 2026-11-16
+- Status: changed 2026-11-27
 - Decided: 2026-11-10 in [Lending pool design](https://github.com/imDev2023/testing-pipeline/issues/21)
 
 ### LENDING-28: Devnet lending market
