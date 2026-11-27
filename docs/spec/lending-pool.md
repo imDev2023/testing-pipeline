@@ -532,9 +532,10 @@ Every instruction measured in every state of "When Kamino can't pay", a failed l
 With Pipeline 0.2's crates (2026-11-19), CI's build measured `rebalance` and `lock_lp` 6 units higher, 71,764 and 36,987, and on 2026-11-20 `rebalance` depositing on SOL at 71,773, then 71,782; with Pipeline 0.3 (2026-11-22), whose fee on a sale into wrapped SOL leaves the test's traders other balances than before, `lock_lp` creating the lock account on USDC measured 36,990; the hardening's figures below replaced these.
 The test measuring `rebalance` depositing and redeeming built its markets on random keys, and klend's deposit and redeem cost 9 units more or less with the address of the market's vault authority, so the figure moved from run to run, on the Mac too (54,509 or 54,518 units of klend's in 30 runs on SOL, 52,809 to 52,827 on USDC).
 Its markets now have a fixed other mint, and so a fixed market state and vault authority, and an LP of a fixed key, like every other compute test, and measure the same on every run.
-Two rows depart from that rule.
+Two rows departed from that rule, and both now sit at it.
 `add_liquidity` kept 60,000 rather than 55,000 until Pipeline 0.4 (below), because its PDA searches make its cost depend on the LP's key and a hooked mint's, and on random keys the hooked first deposit measured up to 55,635.
-`lock_lp` rises from 40,000 to 50,000, because the market's first lock creates the lock account through the associated token program, whose address search costs 4,500 units for every bump it tries after the first: on a market whose lock account needs one bump more than the market measured before, it took 36,981 against the 32,500 recorded then.
+`lock_lp` rose from 40,000 to 50,000, because the market's first lock creates the lock account through the associated token program, whose address search costs 4,500 units for every bump it tries after the first: on a market whose lock account needs one bump more than the market measured before, it took 36,981 against the 32,500 recorded then.
+The rule itself now gives 50,000 for `lock_lp`'s 36,993 and 60,000 for `add_liquidity`'s 45,376.
 These figures are measured on fixed keys; a caller sizing a compute limit for an instruction that searches for an address adds 1,500 units for every further bump the address needs, and 4,500 where the associated token program creates the account.
 Account resolution still answers while the reserve fails its layout check, since it reads the reserve only to choose the redeem accounts; the quote and the swap are what refuse.
 The hardening ticket measured every row again on both builds after its fixes ([Lending AMM: hardening](https://github.com/imDev2023/testing-pipeline/issues/86), 2026-11-17): the reserve's age and version checks, and the check that the lent mint's entry still names the reserve the market recorded, add a few hundred units to every call that reads Kamino.
@@ -546,12 +547,12 @@ On Pipeline 0.2's crates (2026-11-20), CI's build measured `rebalance` leaving w
 `lock_lp`'s highest, the first lock on a USDC-lent market, measured 36,978 on the Mac, so the column records 36,984, those same 6 units above it.
 On Pipeline 0.3 (2026-11-22) the Mac measured `rebalance` leaving withdraw mode at 70,848 and `lock_lp`'s first lock on a USDC-lent market at 36,987, and every other row at or below the column; the column records 70,854 and 36,993, the 6 units CI's build measured above the Mac on those lines on 0.2.
 On Pipeline 0.4 (2026-11-27) every row measured on a hooked mint rose by about 4,500 units, because Pipeline's `test-hook` (since 0.3.1) now derives its validation account and its whitelist from the mint on every transfer, refusing a transfer without the first as a real hook does; our program's own work did not change, and no row on a plain mint moved.
-The column takes the new figures, all on the hooked mint: `pipeline_swap` without a redeem 30,146, `pipeline_seed_liquidity` 115,194, `add_liquidity` 45,376, and `remove_liquidity` 80,668 in cash and 67,385 in kind, and the rule raises four ceilings one step each, to 40,000, 145,000, 105,000 and 85,000; `add_liquidity`'s 60,000 is now the rule's own figure.
+The column takes the new figures, all on the hooked mint: `pipeline_swap` without a redeem 30,182 (on the mainnet build; 30,146 on devnet's), `pipeline_seed_liquidity` 115,194, `add_liquidity` 45,376, and `remove_liquidity` 80,668 in cash and 67,385 in kind, and the rule raises four ceilings one step each, to 40,000, 145,000, 105,000 and 85,000; `add_liquidity`'s 60,000 is now the rule's own figure.
 
 | Instruction | Measured (compute units) | Ceiling (compute units) | Main cost |
 | --- | --- | --- | --- |
 | `pipeline_quote` | 15,983 | 20,000 | Reserve checks and fixed-point maths; well under the quoter's 200,000 cap |
-| `pipeline_swap`, no redeem | 30,146 | 40,000 | One output transfer, the reserve read; the router's own 30k to 35k is outside it |
+| `pipeline_swap`, no redeem | 30,182 | 40,000 | One output transfer, the reserve read; the router's own 30k to 35k is outside it |
 | `pipeline_swap`, with a redeem | 60,156 | 80,000 | Kamino's redeem (mainnet median 29,670) |
 | `pipeline_resolve_accounts` | 26,316 | 35,000 | Runs the quote to decide on the redeem accounts |
 | `pipeline_init_market` | 61,354 | 80,000 | Creating two vaults, the cToken account and the LP mint |
