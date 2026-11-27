@@ -4747,6 +4747,46 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-23 in [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74)
 
+### HOOK-53: Weak terms
+
+- Question: When does Aviary's containment panel warn that a contained token's goal or deadline is so small the containment means little (hardening finding H049)?
+- Answer: When the goal is under a tenth of the home market's quote reserve, real and virtual, which is about what forcing the unlock costs an outsider, or when the deadline is under a week after the binding; `CONTAINMENT.weakTerms` in `apps/terminal-api/src/config.ts`.
+- Alternatives: A fixed floor in SOL, which says nothing for a market quoted in another mint; a floor on chain, which H049's sign-off ruled out.
+- Specified in: [`docs/spec/containment-hook.md`, In Aviary](spec/containment-hook.md#in-aviary)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-27 in [Containment hook in Aviary: the containment panel and the Unlock button](https://github.com/imDev2023/testing-pipeline/issues/76)
+
+### HOOK-54: Which of the two unlocked a token
+
+- Question: How does Aviary know whether a token was unlocked by its goal or by its deadline, which the config does not record?
+- Answer: From the chain when it can tell (before the deadline only the goal could; past it with the goal still short now only the deadline could), and otherwise from the line the hook logs in the unlock's transaction, found in the unlock PDA's short history.
+- Alternatives: Always reading the unlock's log, an RPC history read on every view of an unlocked token; recording the reason in the config, a change to the hook's account layout.
+- Specified in: [`docs/spec/containment-hook.md`, In Aviary](spec/containment-hook.md#in-aviary)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-27 in [Containment hook in Aviary: the containment panel and the Unlock button](https://github.com/imDev2023/testing-pipeline/issues/76)
+
+### HOOK-55: The containment panel's read and the Unlock button's prepare
+
+- Question: How do the containment panel and its Unlock button read the chain and build `unlock`, since the hook has no strategy metadata?
+- Answer: Through two endpoints of Aviary's own, `GET /v1/markets/{market}/containment`, which recognises contained and unlocked tokens in the API at one slot for the panel and the trade box, and `POST /v1/containment/unlock/prepare`, which builds `unlock` from the config's accounts and simulates it for the sending wallet; the panel sits first on the home market's page, above the tax panel.
+- Alternatives: Decoding the mint and config in the page through the one-slot state read, which would put the recognition rule in the web and the trade box apart; registering the panel under the tax AMM's program, which would tie the hook's panel to the tax panel.
+- Specified in: [`docs/spec/containment-hook.md`, In Aviary](spec/containment-hook.md#in-aviary)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-27 in [Containment hook in Aviary: the containment panel and the Unlock button](https://github.com/imDev2023/testing-pipeline/issues/76)
+
+### HOOK-56: The facts' hook flags after an unlock
+
+- Question: How soon does the facts panel drop a contained token's `transfer-hook` and `transfer-hook-authority` flags after its unlock?
+- Answer: As soon as the containment panel has seen the unlock: its read refreshes the stored mint before answering when its flags still name the hook, and the panel then has the facts panel read again.
+- Alternatives: Waiting for the hourly read of every mint, which would show both flags for up to an hour after an unlock.
+- Specified in: [`docs/spec/containment-hook.md`, In Aviary](spec/containment-hook.md#in-aviary)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-27 in [Containment hook in Aviary: the containment panel and the Unlock button](https://github.com/imDev2023/testing-pipeline/issues/76)
+
 ## Buy wall AMM (POOL4)
 
 `POOL4-01` to `POOL4-21` keep the numbers their tickets proposed, which the buy wall AMM's build tickets already cite.

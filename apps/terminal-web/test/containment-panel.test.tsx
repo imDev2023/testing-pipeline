@@ -95,6 +95,7 @@ describe("the containment panel", () => {
   it("shows the tax collected against the unlock goal, in the quote mint, as a number and a bar", () => {
     expect(render()).toContain("Tax collected 0.05464 SOL of the goal of 0.1 SOL, 54.6%");
     expect(html(read())).toMatch(/role="progressbar"[^>]*aria-valuenow="54.6"/);
+    expect(render({ collected: "50000" })).toContain("Tax collected 0.00005 SOL of the goal of 0.1 SOL, under 0.1%");
   });
 
   it("shows the unlock deadline as a date and the time left", () => {
@@ -119,7 +120,7 @@ describe("the containment panel", () => {
   it("warns on weak terms, and only then", () => {
     expect(render()).not.toContain("Weak terms");
     expect(render({ weak: { goal: true, deadline: true } })).toContain(
-      "Weak terms The goal is under 10% of the market's SOL reserve, virtual reserve included, so forcing the unlock costs others little. The deadline is less than 7 days after the token was bound.",
+      "Weak terms The goal is under 10% of the market's reserve of SOL, virtual reserve included, so forcing the unlock costs others little. The deadline is less than 7 days after the token was bound.",
     );
   });
 

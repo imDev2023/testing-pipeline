@@ -152,6 +152,57 @@ const taxLaunchFilled = async (page: Page) => {
   await expect(launch.getByRole("button", { name: "Simulate the launch" })).toBeEnabled();
 };
 
+/**
+ * The containment hook in Aviary (#76), on contained tokens our launch script put on devnet
+ * (deployments/devnet-demo-containment-hook*.json): demo token 3, still contained until 22 Dec 2026,
+ * whose panel shows the goal, the deadline and no Unlock button, whose trade box says the rule before
+ * a buy and whose facts carry both hook flags; and the home markets of tokens unlocked by the goal and
+ * by the deadline, whose facts carry neither.
+ */
+const CONTAINED_MARKET = "6eqVrhnojqZpW9bZCpYYYRUnxuNUeStTXinNuA6f4yQ3";
+const CONTAINED_MINT = "2e1iecsWF5aHFsuKCgUi5j5DW7wXyWRnsBMTkDHBmcXR";
+const UNLOCKED_BY_GOAL_MARKET = "8kiwknCnG7bYCpPPM2QUhdftsYxQwK6LmRnAhYUJotNX";
+const CONTAINED_RULE = "This token can only be bought and sold in this market until it unlocks, and cannot be sent to another wallet.";
+
+/** The facts panel's part for a market's first mint, the token. */
+const tokenFacts = (page: Page) => page.getByRole("region", { name: "Facts" }).getByRole("region", { name: "Its mints" });
+
+const containmentReady = (state: "contained" | "goal" | "deadline") => async (page: Page) => {
+  await marketReady("chart")(page);
+  const panel = page.getByRole("region", { name: "Containment", exact: true });
+  await expect(panel.getByText(/^Read from the chain at slot [\d,]+\./)).toBeVisible();
+  // Before the unlock is due, and once unlocked, there is no Unlock button.
+  await expect(panel.getByRole("button", { name: /unlock/i })).toHaveCount(0);
+  if (state === "contained") {
+    await expect(panel.getByText(`Contained ${CONTAINED_RULE}`)).toBeVisible();
+    await expect(panel.getByRole("progressbar", { name: "Tax collected against the goal" })).toBeVisible();
+    await expect(panel.getByText(/^22 Dec 2026, 22:01 UTC, in \d+ days? \d+ hours?$/)).toBeVisible();
+    for (const part of ["The unlock", "Who could reach the goal cheaply", "Supply"]) await expect(panel.getByRole("heading", { name: part, exact: true })).toBeVisible();
+    await expect(panel.getByText("Weak terms")).toBeVisible();
+    // The trade box opens on a buy of the token, so the rule sits above its button.
+    await expect(swapBox(page).getByRole("note").filter({ hasText: CONTAINED_RULE })).toBeVisible();
+    await expect(tokenFacts(page).getByText("transfer-hook", { exact: true })).toBeVisible();
+    await expect(tokenFacts(page).getByText("transfer-hook-authority", { exact: true })).toBeVisible();
+  } else {
+    await expect(panel.getByText(state === "goal" ? /^Unlocked on 23 Nov 2026, 16:53 UTC, by reaching its goal\./ : /^Unlocked on 23 Nov 2026, 16:52 UTC, by its deadline\./)).toBeVisible();
+    await expect(panel.getByText(CONTAINED_RULE)).toHaveCount(0);
+    await expect(swapBox(page).getByText(CONTAINED_RULE)).toHaveCount(0);
+    await expect(tokenFacts(page).getByText("transfer-hook", { exact: true })).toHaveCount(0);
+    await expect(tokenFacts(page).getByText("transfer-hook-authority", { exact: true })).toHaveCount(0);
+  }
+  await panel.scrollIntoViewIfNeeded();
+};
+
+/** The tax AMM's launch form refusing a contained token's mint, before any signature (#76). */
+const taxLaunchRefusesContained = async (page: Page) => {
+  const launch = page.getByRole("region", { name: "Launch a tax market" });
+  await connectTestWallet(page, page.getByRole("banner").getByRole("button", { name: "Connect wallet" }));
+  await launch.getByLabel("Its mint, by address").fill(CONTAINED_MINT);
+  await expect(launch.getByLabel("The token's facts")).toBeVisible();
+  await expect(launch.getByRole("alert").filter({ hasText: /transfer hook is Aviary's containment hook, so this form cannot launch it/ })).toBeVisible();
+  await expect(launch.getByRole("button", { name: "Simulate the launch" })).toBeDisabled();
+};
+
 /** The explanation panel, once it has loaded. */
 const explanation = async (page: Page) => {
   const panel = page.getByRole("region", { name: "Explanation" });
@@ -321,6 +372,11 @@ const PAGES: { name: string; path: string; status: number; ready: (page: Page) =
   { name: "market-tax-panel", path: `/markets/${TAX_MARKET}`, status: 200, ready: taxPanelReady("read") },
   { name: "market-tax-payout-review", path: `/markets/${TAX_MARKET}`, status: 200, ready: taxPanelReady("payout"), wallet: true },
   { name: "create-tax-launch", path: `/create?strategy=${TAX_AMM}`, status: 200, ready: taxLaunchFilled, wallet: true },
+  // The containment hook in Aviary (#76): a contained token's home market, tokens unlocked by the goal and by the deadline, and the launch form refusing a contained token.
+  { name: "market-contained", path: `/markets/${CONTAINED_MARKET}`, status: 200, ready: containmentReady("contained") },
+  { name: "market-unlocked-goal", path: `/markets/${UNLOCKED_BY_GOAL_MARKET}`, status: 200, ready: containmentReady("goal") },
+  { name: "market-unlocked-deadline", path: `/markets/${MARKET_WITH_ONE_TRADE}`, status: 200, ready: containmentReady("deadline") },
+  { name: "create-tax-launch-contained", path: `/create?strategy=${TAX_AMM}`, status: 200, ready: taxLaunchRefusesContained, wallet: true },
   { name: "create", path: "/create", status: 200, ready: (page: Page) => expect(page.getByRole("region", { name: "Choose a strategy" }).getByRole("listitem").first()).toBeVisible() },
   {
     // A strategy not ours, so its metadata's create form shows: devnet's Counterflow (our products show their own, PIPESCOPE-162).

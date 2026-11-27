@@ -85,7 +85,6 @@ export function ContainmentPanelBody({ market, read, entry, onUnlocked }: { mark
   const mintOf = (address: string): MarketMint | null => market.mints.find((m) => m.mint === address) ?? null;
   const token = mintOf(entry.mint);
   const quote = mintOf(entry.quote_mint);
-  const quoteName = quote?.symbol ?? quote?.token?.symbol ?? "quote";
   const amount = (raw: string, mint: MarketMint | null, address: string) => (
     <span data-raw={raw}>
       <TokenAmount raw={raw} decimals={mint?.decimals ?? null} mint={address} symbol={mint?.symbol ?? null} token={mint?.token ?? null} />
@@ -120,7 +119,7 @@ export function ContainmentPanelBody({ market, read, entry, onUnlocked }: { mark
                 ) : (
                   <span className={styles.goal}>
                     <span>
-                      {amount(entry.collected, quote, entry.quote_mint)} of the goal of {amount(entry.goal, quote, entry.quote_mint)}, {share}%
+                      {amount(entry.collected, quote, entry.quote_mint)} of the goal of {amount(entry.goal, quote, entry.quote_mint)}, {shareWords(entry.collected, share)}
                     </span>
                     <span className={styles.track} role="progressbar" aria-label="Tax collected against the goal" aria-valuemin={0} aria-valuemax={100} aria-valuenow={share ?? 0}>
                       <span className={styles.fill} style={{ width: `${share ?? 0}%` }} />
@@ -220,7 +219,7 @@ export function ContainmentPanelBody({ market, read, entry, onUnlocked }: { mark
           <strong className={styles.label}>Weak terms</strong>
           {entry.weak.goal && (
             <p>
-              The goal is under {percent(read.weak_terms.goal_of_quote_reserve_bps)} of the market&apos;s {quoteName} reserve, virtual reserve included, so forcing the unlock costs others little.
+              The goal is under {percent(read.weak_terms.goal_of_quote_reserve_bps)} of the market&apos;s reserve of {quote ? <MintLabel mint={quote.mint} symbol={quote.symbol} token={quote.token} /> : "its quote mint"}, virtual reserve included, so forcing the unlock costs others little.
             </p>
           )}
           {entry.weak.deadline && <p>The deadline is less than {Math.round(read.weak_terms.deadline_min_seconds / 86_400)} days after the token was bound.</p>}
@@ -239,11 +238,14 @@ export function ContainmentPanelBody({ market, read, entry, onUnlocked }: { mark
       )}
 
       <p className={styles.note}>
-        Read from the chain at slot {formatInteger(read.slot)}. {token ? <MintLabel mint={token.mint} symbol={token.symbol} token={token.token} /> : "The token"} is bound to this market by Aviary&apos;s containment hook.
+        Read from the chain at slot {formatInteger(read.slot)}. {token ? <MintLabel mint={token.mint} symbol={token.symbol} token={token.token} /> : "The token"} {isContained ? "is" : "was"} bound to this market by Aviary&apos;s containment hook.
       </p>
     </div>
   );
 }
+
+/** The goal's share collected in words: "54.6%", and "under 0.1%" for some tax but less than a tenth of a percent. */
+const shareWords = (collected: string, share: number | null) => (share === 0 && BigInt(collected) > 0n ? "under 0.1%" : `${share}%`);
 
 /** A part of the supply in percent, to at most two decimal places: "20%". */
 function supplyShare(part: string, total: string): string {
