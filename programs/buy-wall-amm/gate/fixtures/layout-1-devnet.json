@@ -10,7 +10,7 @@
     "unix_timestamp": 1795149252
   },
   "synthetic": false,
-  "note": "Layout version(s) 1: 1 market(s) saved from devnet at slot 524233385.",
+  "note": "Layout version(s) 1: 1 market(s) saved from devnet at slot 524233385. On 2026-11-27 every router Market in it was moved to the layout with a fee mint index (wrapped SOL, index 1), byte for byte what the router's migrate_market wrote on devnet, since Pipeline 0.4.0's router has no migrate_market.",
   "baseline": {
     "executable_sha256": "89093fa7feed9f6400cb8b405e0bfe094c1d04327a231b7d1fed449d3c14dac9",
     "quotes": [
@@ -159,11 +159,11 @@
     },
     {
       "address": "7BctWoaSumdxkMBCXxMum59NV5CZJBvC33SCrcGa5CAK",
-      "lamports": 2540000,
+      "lamports": 2545080,
       "owner": "PiPEf4fFBpYXCtgfiWgVWzZNXnq2wZ7bnXidJCTwf34",
       "executable": false,
       "rent_epoch": 18446744073709551615,
-      "data": "277VNwDjxpqf/J1NaQ7rd1WziJfj1QLwhEPtx+n5MjRwfHAqLVQ9oeNgD/ghzt74Mpze39rKk2x/LbrGbBIX1MlQa/RyRu6tAoNG8zBht++huuZwOoGP5DweV63gw1Dkh5qSchIG7UrGBpuIV/6rgYT7aH9jRhjANdrEOdwa6ztVmKDwAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAdj4KmkCUnmtP6SkeVvnic23g6pAY6/+dVCNwZiQSgCuSqwbEK3gEnJG5YBYRDPHVwYApcTXuski2zLoxtnIu6QAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAg48CSsmSn7bKDlXFNsFBhaSAM+h/wyHWKTMGbaXxZukDyf9qAAAAAP3+"
+      "data": "277VNwDjxpqf/J1NaQ7rd1WziJfj1QLwhEPtx+n5MjRwfHAqLVQ9oeNgD/ghzt74Mpze39rKk2x/LbrGbBIX1MlQa/RyRu6tAoNG8zBht++huuZwOoGP5DweV63gw1Dkh5qSchIG7UrGBpuIV/6rgYT7aH9jRhjANdrEOdwa6ztVmKDwAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAdj4KmkCUnmtP6SkeVvnic23g6pAY6/+dVCNwZiQSgCuSqwbEK3gEnJG5YBYRDPHVwYApcTXuski2zLoxtnIu6QAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAg48CSsmSn7bKDlXFNsFBhaSAM+h/wyHWKTMGbaXxZukDyf9qAAAAAP3+AQ=="
     },
     {
       "address": "8nYba48kFDoZVSCYkD3z6TgCwk5vePDSVkGG6pJZRyzN",

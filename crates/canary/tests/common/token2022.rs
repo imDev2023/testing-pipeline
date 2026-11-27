@@ -202,6 +202,18 @@ impl Cluster {
     /// mint into a target account. Returns the stash and the target.
     pub fn init_refill_hook(&mut self, mint: &Pubkey, stash_amount: u64) -> (Pubkey, Pubkey) {
         let stash_mint = self.create_mint(6);
+        self.init_refill_hook_with_stash_of(mint, &stash_mint, stash_amount)
+    }
+
+    /// [`Self::init_refill_hook`] with a stash of `stash_mint`, an SPL Token mint the caller
+    /// chose: the stash is the associated token account of the hook's `["stash"]` PDA.
+    pub fn init_refill_hook_with_stash_of(
+        &mut self,
+        mint: &Pubkey,
+        stash_mint: &Pubkey,
+        stash_amount: u64,
+    ) -> (Pubkey, Pubkey) {
+        let stash_mint = *stash_mint;
         let authority = Pubkey::find_program_address(&[b"stash"], &TEST_HOOK_REFILL).0;
         let stash = self.give(&stash_mint, &authority, stash_amount);
         let target = self.give(&stash_mint, &Pubkey::new_unique(), 0);

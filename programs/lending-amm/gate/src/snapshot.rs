@@ -94,9 +94,6 @@ pub struct RecordedStep {
 #[serde(tag = "step", rename_all = "snake_case")]
 pub enum StepKind {
     ReadState,
-    /// Moving a router `Market` recorded before Pipeline 0.3's fee mints to the current layout
-    /// with the router's `migrate_market`, which anyone may call.
-    Migrate,
     Register,
     FindMarket,
     FeeAccounts,
@@ -128,8 +125,7 @@ impl StepKind {
     pub fn may_fail_under_any_build(&self) -> bool {
         matches!(
             self,
-            StepKind::Migrate
-                | StepKind::Register
+            StepKind::Register
                 | StepKind::FeeAccounts
                 | StepKind::Rebalance
                 | StepKind::Buy

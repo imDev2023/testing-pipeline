@@ -4,8 +4,8 @@
 // a page that reconnects after missing trades shows them all, once; and the indexer's socket is open
 // only while someone watches. src/live.ts says how a swap lands under each E2E_RPC.
 import { expect, test, type Page } from "@playwright/test";
-import { CANDLES } from "terminal-api/config";
-import { Candles, Market, TradesPage } from "terminal-api/contract";
+import { CANDLES, VOLUME_WINDOW_SECONDS } from "terminal-api/config";
+import { Candles, LiveMessage, Market, TradesPage } from "terminal-api/contract";
 import { createDb, trades as tradesTable } from "terminal-db";
 import { rebuildCandles, writtenCandles } from "terminal-indexer";
 import { landSwap, LIVE_MARKET } from "./live";
@@ -49,6 +49,14 @@ test.describe.configure({ mode: "serial" });
 
 test("a swap sent by a script appears in Trades, in the forming candle and on the feed's row within seconds", async ({ page, context }) => {
   const feed = await context.newPage();
+  // Every update of this market the feed's room sends the feed page.
+  const feedUpdates: number[] = [];
+  feed.on("websocket", (socket) =>
+    socket.on("framereceived", ({ payload }) => {
+      const message = LiveMessage.safeParse(JSON.parse(String(payload)));
+      if (message.success && message.data.events.some((e) => e.type === "market" && e.market.address === LIVE_MARKET)) feedUpdates.push(Date.now());
+    }),
+  );
   await feed.goto("/");
   const feedRow = feed.getByRole("region", { name: "Markets" }).getByRole("row").filter({ has: feed.locator(`a[href="/markets/${LIVE_MARKET}"]`) });
   await expect(feedRow).toBeVisible();
@@ -63,6 +71,7 @@ test("a swap sent by a script appears in Trades, in the forming candle and on th
   // Both pages have joined their rooms, so the indexer holds its socket.
   await expect.poll(live).toMatchObject({ open: true, rooms: expect.arrayContaining(["feed", `market:${LIVE_MARKET}`]) });
 
+  const updatesBefore = feedUpdates.length;
   const { signature } = await landSwap("live");
 
   // Trades: at the top, within seconds.
@@ -77,9 +86,17 @@ test("a swap sent by a script appears in Trades, in the forming candle and on th
   await expect(legend.first()).toHaveText(utc(forming.start));
   await expect(legend.last()).toHaveText(`${forming.trades} ${forming.trades === 1 ? "trade" : "trades"}`);
 
-  // The feed's row: one trade more in its last 24 hours.
+  // The feed's row: its room sent the market again, and the row counts the swap in its last 24
+  // hours if it landed within them. The API counts from its own clock, so a recorded swap (CI's
+  // fixtures) leaves the window a day after its recording and is then rightly not counted.
+  await expect.poll(() => feedUpdates.length, { timeout: 10_000 }).toBeGreaterThan(updatesBefore);
+  const { trades: [landed] } = await api(`/v1/markets/${LIVE_MARKET}/trades?limit=1`, (b) => TradesPage.parse(b));
+  expect(landed?.signature).toBe(signature);
+  const inWindow = Date.parse(landed!.block_time!) >= Date.now() - VOLUME_WINDOW_SECONDS * 1000;
+  const after = await api(`/v1/markets/${LIVE_MARKET}`, (b) => Market.parse(b));
+  expect(after.stats_24h.trades).toBe(before.stats_24h.trades + (inWindow ? 1 : 0));
   const trades = (n: number) => `${n.toLocaleString("en-US")} ${n === 1 ? "trade" : "trades"}`;
-  await expect(feedRow).toContainText(trades(before.stats_24h.trades + 1), { timeout: 10_000 });
+  await expect(feedRow).toContainText(after.stats_24h.trades === 0 ? "none" : trades(after.stats_24h.trades), { timeout: 10_000 });
 });
 
 test("a page that reconnects after missing trades shows them all, once", async ({ page }) => {

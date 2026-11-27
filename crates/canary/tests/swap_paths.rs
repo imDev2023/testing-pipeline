@@ -193,6 +193,74 @@ fn a_swap_that_lowers_the_traders_output_balance_is_refused_on_both_paths() {
     }
 }
 
+/// A sale of a token whose transfer hook (Pipeline's `test-hook-refill`) empties a stash of
+/// the market's other mint, a plain SPL mint and so no fee mint, on every transfer, by the
+/// stash's owner: the strategy pays the sale into the stash, then Pipeline's fee, taken from
+/// the input after the swap is measured, runs the hook, which empties the stash again.
+fn sale_whose_fee_transfer_empties_the_traders_output(path: &dyn SwapPath) -> canary::trade::Leg {
+    use common::{deploy, Extensions, TEST_HOOK_REFILL, TOKEN, TOKEN_2022};
+    let mut cluster = Cluster::new();
+    let admin = cluster.admin_key();
+    deploy(
+        &mut cluster.svm,
+        TEST_HOOK_REFILL,
+        "test_hook_refill",
+        Some(admin),
+    );
+    let token = cluster.create_mint_2022(
+        6,
+        &Extensions {
+            transfer_hook: Some((TEST_HOOK_REFILL, Some(admin))),
+            ..Extensions::default()
+        },
+    );
+    let money = cluster.create_mint(6);
+    cluster.init_refill_hook_with_stash_of(&token, &money, 0);
+    let market = cluster.cp_market_on(
+        (money, TOKEN),
+        (token, TOKEN_2022),
+        30,
+        (1_000 * SOL, 1_000_000_000_000),
+    );
+    cluster.set_supply(&token, 100_000_000_000_000);
+    let stash_owner = Pubkey::find_program_address(&[b"stash"], &TEST_HOOK_REFILL).0;
+
+    let mut source = SvmSource::new(cluster.svm.clone());
+    let copy = canary::market::Copy::build(
+        &mut source,
+        market.market,
+        &pipeline_check::CheckOptions::default(),
+    )
+    .unwrap();
+    let mut session = canary::market::Session::new(
+        &copy,
+        &mut source,
+        vec![],
+        Seed::from_hex(&"5e".repeat(32)).unwrap(),
+    );
+    let mut svm = session.fresh();
+    session.fund(&mut svm, &stash_owner, 1, 0, 1_000_000_000);
+    session.leg(&mut svm, path, &stash_owner, 1, 0, 1_000_000_000)
+}
+
+#[test]
+fn a_swap_whose_fee_transfer_lowers_the_traders_output_is_refused_on_both_paths() {
+    // Since Pipeline 0.4.0 the router reads the trader's output again after its fee
+    // transfers, whose transfer hooks run after the swap was measured, and refuses the swap
+    // when it lost more than a fee charged in it (`OutputDecreased`); the direct path must
+    // refuse it the same way.
+    for path in [&ThroughRouter as &dyn SwapPath, &DirectToStrategy] {
+        let leg = sale_whose_fee_transfer_empties_the_traders_output(path);
+        let router = path.runs_router();
+        let failure = leg.swap.expect_err(&format!(
+            "the fee transfer emptied the trader's output (through the router: {router})"
+        ));
+        let failure = serde_json::to_value(&failure).unwrap();
+        assert_eq!(failure["class"], "router_refused", "{failure}");
+        assert!(failure.to_string().contains("OutputDecreased"), "{failure}");
+    }
+}
+
 #[test]
 fn a_strategy_that_tries_to_pull_more_from_the_trader_fails_the_same_way_on_both_paths() {
     // Under the router the strategy never holds the trader's signature, so the direct path
