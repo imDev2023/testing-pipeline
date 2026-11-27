@@ -9,7 +9,7 @@ import type { Market, MintFacts } from "terminal-api/contract";
 import { describe, expect, it } from "vitest";
 import { WalletProvider } from "@/components/wallet/WalletProvider";
 import { ContainmentPanelBody } from "@/products/containment/ContainmentPanel";
-import { CONTAINED_RULE, containedLaunchRefusal, containedRuleFor, timeLeft } from "@/products/containment/view";
+import { CONTAINED_RULE, containedLaunchRefusal, containedRuleFor, deadlineWait, timeLeft } from "@/products/containment/view";
 
 const TOKEN = "CnTd1QhbTzyCLTVCQXrVBmy1xKkRjqF1Gw5k1y2nEaHw";
 const WSOL = "So11111111111111111111111111111111111111112";
@@ -159,6 +159,18 @@ describe("timeLeft", () => {
     expect(timeLeft(NOW + 90, NOW)).toBe("in 1 minute 30 seconds");
     expect(timeLeft(NOW + 3 * 86_400 + 5 * 3_600 + 59, NOW)).toBe("in 3 days 5 hours");
     expect(timeLeft(NOW - 7_200, NOW)).toBe("passed 2 hours ago");
+  });
+});
+
+describe("deadlineWait", () => {
+  it("is how long the panel waits to read again, a second past the earliest deadline still ahead", () => {
+    expect(deadlineWait(read({ deadline: NOW + 90 }))).toBe(91_000);
+    expect(deadlineWait(read({ deadline: NOW - 1 }))).toBeNull();
+    expect(deadlineWait(read({ status: "unlocked", unlocked_at: NOW, deadline: NOW + 90 }))).toBeNull();
+  });
+
+  it("is none for a deadline further away than a browser timer can wait, about 24.8 days, which would fire at once", () => {
+    expect(deadlineWait(read({ deadline: NOW + 25 * 86_400 }))).toBeNull();
   });
 });
 

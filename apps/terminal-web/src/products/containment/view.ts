@@ -46,6 +46,22 @@ export function timeLeft(deadline: number, now: number): string {
   return deadline > now ? `in ${span(deadline - now)}` : `passed ${span(now - deadline)} ago`;
 }
 
+/** The longest wait a browser timer keeps (2^31 - 1 ms, about 24.8 days); a longer one fires at once. */
+const LONGEST_TIMER_MS = 2 ** 31 - 1;
+
+/**
+ * How long the panel waits before reading again so the Unlock button appears as the deadline passes: a
+ * second past the earliest deadline of a token still contained, measured on the chain's clock at the
+ * read. Null when no deadline is ahead, or when one is further than a timer can wait, which the
+ * panel's regular reads then bring closer.
+ */
+export function deadlineWait(read: MarketContainment): number | null {
+  const ahead = read.contained.filter((m) => m.status === "contained" && m.deadline > read.chain_time).map((m) => m.deadline);
+  if (!ahead.length) return null;
+  const wait = (Math.min(...ahead) - read.chain_time + 1) * 1000;
+  return wait <= LONGEST_TIMER_MS ? wait : null;
+}
+
 /** The trade box's one line before buying `receive` on this market: the rule when it is a contained token, else null. */
 export function containedRuleFor(containment: MarketContainment | null, receive: string): string | null {
   return containment?.contained.some((m) => m.mint === receive && m.status === "contained") ? CONTAINED_RULE : null;

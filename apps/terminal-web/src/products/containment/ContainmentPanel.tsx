@@ -24,7 +24,7 @@ import { PanelFrame, type Loaded } from "@/components/Panel";
 import { ShortAddress } from "@/components/ShortAddress";
 import { aboutSlots } from "../taxAmm/TaxPanel";
 import { Unlock } from "./Unlock";
-import { CONTAINED_RULE, goalShare, timeLeft } from "./view";
+import { CONTAINED_RULE, deadlineWait, goalShare, timeLeft } from "./view";
 import styles from "./Containment.module.css";
 
 export type ContainmentRead = { ok: true; value: MarketContainment } | { ok: false; message: string };
@@ -58,12 +58,12 @@ export function ContainmentPanel({ market, initial }: { market: Market; initial:
     return () => clearInterval(every);
   }, [contained, load]);
   // Read again a second after the earliest deadline still ahead, so the Unlock button appears when it falls due.
-  const nextDeadline = shown?.contained.filter((m) => m.status === "contained" && m.deadline > shown.chain_time).reduce<number | null>((at, m) => (at === null || m.deadline < at ? m.deadline : at), null) ?? null;
+  const wait = shown ? deadlineWait(shown) : null;
   useEffect(() => {
-    if (nextDeadline === null || !shown) return;
-    const wait = setTimeout(() => void load(), (nextDeadline - shown.chain_time + 1) * 1000);
-    return () => clearTimeout(wait);
-  }, [nextDeadline, shown, load]);
+    if (wait === null) return;
+    const timer = setTimeout(() => void load(), wait);
+    return () => clearTimeout(timer);
+  }, [wait, load]);
 
   const unlocked = useCallback(() => {
     // The API reads the unlocked mint again before it answers, so the facts panel's trust flags follow once it has; the trade box's rule follows with the page.
