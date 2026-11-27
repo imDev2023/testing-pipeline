@@ -44,8 +44,8 @@ pub fn money_side(sides: &[Side]) -> usize {
 pub enum Basis {
     /// Fixed amounts of SOL.
     Sol,
-    /// Parts per million of the money vault, a size under the dust floor replaced by the
-    /// whole-token size in its place (`CANARY-49`).
+    /// Parts per million of the money vault, a size under the dust floor raised to it
+    /// (`CANARY-49`).
     ShareOfVault,
     /// Whole tokens, because the money vault is nearly empty.
     WholeTokens,
@@ -93,27 +93,20 @@ pub fn ladder(is_wrapped_sol: bool, vault: u64, decimals: u8) -> Ladder {
             reference: in_hundredths(SMALL_VAULT_REFERENCE_HUNDREDTHS),
         };
     }
-    // A share of the vault under the dust floor is replaced by the whole-token size in its
-    // place, which the config module keeps in step with the share's (`CANARY-49`).
-    let floor = in_hundredths(DUST_FLOOR_HUNDREDTHS);
-    let size = |ppm: u64, hundredths: u64| {
-        let share = ((vault as u128 * ppm as u128) / PPM as u128).max(1) as u64;
-        if share < floor {
-            in_hundredths(hundredths)
-        } else {
-            share
-        }
-    };
+    // A share of the vault under the dust floor is raised to it, the floor never above the ladder's
+    // largest share, so the ladder keeps its order and moves with the vault (`CANARY-49`).
+    let of_vault = |ppm: u64| ((vault as u128 * ppm as u128) / PPM as u128).max(1) as u64;
+    let largest = VAULT_SIZES_PPM
+        .iter()
+        .map(|p| of_vault(*p))
+        .max()
+        .unwrap_or(1);
+    let floor = in_hundredths(DUST_FLOOR_HUNDREDTHS).min(largest);
+    let size = |ppm: u64| of_vault(ppm).max(floor);
     Ladder {
         basis: Basis::ShareOfVault,
-        sizes: sorted(
-            VAULT_SIZES_PPM
-                .iter()
-                .zip(SMALL_VAULT_SIZES_HUNDREDTHS)
-                .map(|(ppm, hundredths)| size(*ppm, hundredths))
-                .collect(),
-        ),
-        reference: size(VAULT_REFERENCE_PPM, SMALL_VAULT_REFERENCE_HUNDREDTHS),
+        sizes: sorted(VAULT_SIZES_PPM.iter().map(|p| size(*p)).collect()),
+        reference: size(VAULT_REFERENCE_PPM),
     }
 }
 

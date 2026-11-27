@@ -8,7 +8,7 @@
 // leaves them, is shown as unlocked, when and by which of the two.
 import { TOKEN_2022_PROGRAM_ADDRESS } from "@pipeline-sol/sdk";
 import { ExtensionType } from "@solana-program/token-2022";
-import { address, getBase64Encoder, type Address, type Rpc, type SolanaRpcApi } from "@solana/kit";
+import { address, getBase64Encoder, type Address, type Rpc, type Signature, type SolanaRpcApi } from "@solana/kit";
 import { CONFIG_DISCRIMINATOR, CONTAINMENT_HOOK_PROGRAM_ADDRESS, findConfigPda, findUnlockPda, getConfigDecoder, type Config } from "containment-hook-scripts/client/index.ts";
 import { getTaxMarketDecoder, getTaxMarketSize, SUITE_SHARE_BPS, TAX_AMM_PROGRAM_ADDRESS, TAX_MARKET_DISCRIMINATOR, type TaxMarket } from "tax-amm-scripts/client/index.ts";
 import { CONTAINMENT } from "../../config";
@@ -132,17 +132,28 @@ export function unlockedByIn(logs: readonly string[]): UnlockBy | null {
 }
 
 /**
- * Which of the two the unlock's own log names, read from the unlock PDA's history: the PDA is named
- * by `bind` and `unlock` alone, so its history is short, and the unlock is its newest transaction
- * that succeeded. Null when no transaction in the history says.
+ * Which of the two the unlock's own log names, from the unlock PDA's transactions in the second of
+ * the unlock: `unlocked_at` is the clock of the unlock's block, which is that block's time. Anyone
+ * may name the PDA in a later transaction, so the search pages back past them, newest first, and
+ * stops at the first transaction older than the unlock. Null when none of them says.
  */
-async function unlockedByLog(rpc: Rpc<SolanaRpcApi>, unlockPda: Address): Promise<UnlockBy | null> {
-  const signatures = await rpc.getSignaturesForAddress(unlockPda, { limit: CONTAINMENT.unlockHistory, commitment: "confirmed" }).send();
-  for (const { signature, err } of signatures) {
-    if (err !== null) continue;
-    const transaction = await rpc.getTransaction(signature, { encoding: "json", commitment: "confirmed", maxSupportedTransactionVersion: 0 }).send();
-    const by = unlockedByIn(transaction?.meta?.logMessages ?? []);
-    if (by) return by;
+async function unlockedByLog(rpc: Rpc<SolanaRpcApi>, unlockPda: Address, unlockedAt: bigint): Promise<UnlockBy | null> {
+  const { pageSize, pages, windowSeconds } = CONTAINMENT.unlockSearch;
+  const earliest = Number(unlockedAt) - windowSeconds;
+  const latest = Number(unlockedAt) + windowSeconds;
+  let before: Signature | undefined;
+  for (let page = 0; page < pages; page++) {
+    const signatures = await rpc.getSignaturesForAddress(unlockPda, { limit: pageSize, commitment: "confirmed", ...(before ? { before } : {}) }).send();
+    for (const { signature, err, blockTime } of signatures) {
+      const at = blockTime === null ? null : Number(blockTime);
+      if (at !== null && at < earliest) return null;
+      if (err !== null || (at !== null && at > latest)) continue;
+      const transaction = await rpc.getTransaction(signature, { encoding: "json", commitment: "confirmed", maxSupportedTransactionVersion: 0 }).send();
+      const by = unlockedByIn(transaction?.meta?.logMessages ?? []);
+      if (by) return by;
+    }
+    if (signatures.length < pageSize) return null;
+    before = signatures.at(-1)!.signature;
   }
   return null;
 }
@@ -197,7 +208,7 @@ export async function readContainment(rpc: Rpc<SolanaRpcApi>, market: HomeMarket
     };
     contained.push(entry);
     // Only the unlock's own log can tell when the deadline had passed and the goal is reached now.
-    if (unlockedAt !== null && entry.unlocked_by === null) reasons.push(unlockedByLog(rpc, unlocks[i]!).then((by) => void (entry.unlocked_by = by)));
+    if (unlockedAt !== null && entry.unlocked_by === null) reasons.push(unlockedByLog(rpc, unlocks[i]!, unlockedAt).then((by) => void (entry.unlocked_by = by)));
   });
   await Promise.all(reasons);
 

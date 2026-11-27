@@ -193,9 +193,11 @@ describe("GET /v1/markets/{market}/containment", () => {
   describe("once unlocked", () => {
     const UNLOCK_SIGNATURE = "5UnLock9qQx2yJXrM7kA3mWfK8sV1eD6hR4tN2cB7gL9pZ3wY5uT8oI1aS4dF6gH8jK2lM4nB6vC8xZ1qW3eR5tY7";
     const cleared = transferHook(null, null);
+    // The unlock's block time is the clock the hook wrote into the config's `unlocked_at`.
+    const UNLOCKED_AT = 1_799_600_010;
     const unlockedTransaction = (line: string) => ({
-      slot: SLOT - 10,
-      blockTime: Number(NOW) - 100,
+      slot: SLOT - 10_000,
+      blockTime: UNLOCKED_AT,
       transactionIndex: 3,
       transaction: { signatures: [UNLOCK_SIGNATURE], message: { accountKeys: [LAUNCHER, TOKEN, configAddress, unlockAddress, MARKET_STATE, TOKEN_2022_PROGRAM_ADDRESS, HOOK] } },
       meta: { err: null, logMessages: [`Program ${HOOK} invoke [1]`, "Program log: Instruction: Unlock", `Program log: ${line}`, `Program ${HOOK} success`] },
@@ -223,6 +225,63 @@ describe("GET /v1/markets/{market}/containment", () => {
       expect((await containment()).contained[0]!.unlocked_by).toBe("deadline");
       rpc.history[0] = unlockedTransaction("Unlocked by the goal: 100000001 of 100000000 collected");
       expect((await containment()).contained[0]!.unlocked_by).toBe("goal");
+    });
+
+    /** A transaction of someone else's that names the unlock PDA, as anyone may send, `n` of them apart. */
+    const naming = (n: number, blockTime: number, slot: number) => ({
+      slot,
+      blockTime,
+      transactionIndex: n % 1_000,
+      transaction: { signatures: [`${"5".repeat(80)}${String(n + 1).padStart(8, "1").replaceAll("0", "z")}`], message: { accountKeys: [LAUNCHER, unlockAddress] } },
+      meta: { err: null, logMessages: [] },
+    });
+
+    it("finds the unlock's log by its block time behind any number of later transactions that name the unlock PDA, reading only the unlock", async () => {
+      rpc.history.push(naming(0, UNLOCKED_AT - 86_400, SLOT - 20_000), unlockedTransaction("Unlocked by the deadline 1799600000"));
+      for (let n = 1; n <= 1_005; n++) rpc.history.push(naming(n, UNLOCKED_AT + 60 + n, SLOT - 9_000 + Math.floor(n / 1_000)));
+      chain({ hook: cleared, cfg: { unlockDeadline: 1_799_600_000n, unlockedAt: BigInt(UNLOCKED_AT) }, state: { taxCollected: 300_000_000n } });
+      const before = rpc.requests.length;
+      expect((await containment()).contained[0]!.unlocked_by).toBe("deadline");
+      const asked = rpc.requests.slice(before);
+      expect(asked.filter((r) => r.method === "getSignaturesForAddress")).toHaveLength(2);
+      expect(asked.filter((r) => r.method === "getTransaction").map((r) => r.params[0])).toEqual([UNLOCK_SIGNATURE]);
+    });
+
+    it("stops at the first transaction older than the unlock, reading none, when no transaction in the unlock's second says", async () => {
+      rpc.history.push(naming(0, UNLOCKED_AT - 86_400, SLOT - 20_000));
+      chain({ hook: cleared, cfg: { unlockDeadline: 1_799_600_000n, unlockedAt: BigInt(UNLOCKED_AT) }, state: { taxCollected: 300_000_000n } });
+      const before = rpc.requests.length;
+      expect((await containment()).contained[0]!.unlocked_by).toBeNull();
+      expect(rpc.requests.slice(before).map((r) => r.method)).not.toContain("getTransaction");
+    });
+
+    it("answers the containment read though refreshing the unlocked mint's stored facts fails, and refreshes them on a later read", async () => {
+      chain({ hook: cleared, cfg: { unlockedAt: 1_799_500_000n } });
+      const stored = async () => {
+        const { db, close } = createDb(database.url);
+        try {
+          return (await db.select({ flags: mints.flags }).from(mints).where(eq(mints.address, TOKEN)))[0]!.flags;
+        } finally {
+          await close();
+        }
+      };
+      {
+        const { db, close } = createDb(database.url);
+        try {
+          await db.update(mints).set({ flags: ["transfer-hook", "transfer-hook-authority"] }).where(eq(mints.address, TOKEN));
+        } finally {
+          await close();
+        }
+      }
+      rpc.refuse.add("getEpochInfo");
+      try {
+        expect((await containment()).contained[0]).toMatchObject({ status: "unlocked", unlocked_by: "goal" });
+        expect(await stored()).toContain("transfer-hook");
+      } finally {
+        rpc.refuse.delete("getEpochInfo");
+      }
+      await containment();
+      expect(await stored()).not.toContain("transfer-hook");
     });
 
     it("leaves which of the two unknown when the unlock's transaction cannot be found", async () => {

@@ -30,11 +30,12 @@ export const FACTS_STALE_EVENT = "aviary:facts-stale";
 
 export function MarketFacts({ market, canary }: { market: string; canary: CanaryRead }) {
   const load = useCallback((signal: AbortSignal) => getFromApi(`/v1/markets/${encodeURIComponent(market)}/facts`, MarketFactsAnswer, { signal }), [market]);
-  const { state, retry } = useLoad(load);
+  const { state, retry, refresh } = useLoad(load);
+  // Read again behind the facts shown, so they neither blank nor give way to a failed read.
   useEffect(() => {
-    window.addEventListener(FACTS_STALE_EVENT, retry);
-    return () => window.removeEventListener(FACTS_STALE_EVENT, retry);
-  }, [retry]);
+    window.addEventListener(FACTS_STALE_EVENT, refresh);
+    return () => window.removeEventListener(FACTS_STALE_EVENT, refresh);
+  }, [refresh]);
   return (
     <PanelFrame title="Facts" what="this market's facts" state={state} retry={retry}>
       {({ market: m, strategy, mints }) => {

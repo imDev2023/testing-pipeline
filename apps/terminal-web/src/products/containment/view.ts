@@ -5,6 +5,15 @@ import { CONTAINMENT_HOOK_PROGRAM_ADDRESS } from "containment-hook-scripts/clien
 import type { ContainedMint, MarketContainment } from "terminal-api/containment";
 import type { MintFacts } from "terminal-api/contract";
 
+/** Whether `after` shows a mint unlocked that `before` showed contained: the facts and the page then read again. */
+export function newlyUnlocked(before: MarketContainment | null, after: MarketContainment): boolean {
+  const was = new Set(before?.contained.filter((m) => m.status === "contained").map((m) => m.mint) ?? []);
+  return after.contained.some((m) => m.status === "unlocked" && was.has(m.mint));
+}
+
+/** Whether `read` shows `mint` unlocked, which the panel waits for after an unlock confirms. */
+export const showsUnlocked = (read: MarketContainment | null, mint: string): boolean => read?.contained.some((m) => m.mint === mint && m.status === "unlocked") ?? false;
+
 /** The rule in one line: the panel's, and the trade box's before a buy. */
 export const CONTAINED_RULE = "This token can only be bought and sold in this market until it unlocks, and cannot be sent to another wallet.";
 

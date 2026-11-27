@@ -77,7 +77,11 @@ export function containmentRoutes(app: Hono<AppEnv>) {
     })();
     if (!home) throw new HTTPException(404, { message: "Aviary knows no market created through Pipeline at this address." });
     const read = await readContainment(createSolanaRpc(c.env.RPC_URL), home);
-    await refreshUnlockedMints(c.env, read.contained.filter((m) => m.status === "unlocked").map((m) => m.mint));
+    // Awaited, so the facts panel reads the refreshed flags once this answers (HOOK-56), but never the
+    // panel's failure: the containment was read, and the next read tries the refresh again.
+    await refreshUnlockedMints(c.env, read.contained.filter((m) => m.status === "unlocked").map((m) => m.mint)).catch((e: unknown) =>
+      console.error("containment: refreshing an unlocked mint's stored facts failed; the next read tries again", e instanceof Error ? e.name : typeof e),
+    );
     return c.json(MarketContainment.parse(read));
   });
 }

@@ -3304,8 +3304,8 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### CANARY-49: Sizes too small to sell back
 
 - Question: What does Canary trade when a share of the money vault is too small to sell back for anything?
-- Answer: A share of the vault under the dust floor, `DUST_FLOOR_HUNDREDTHS` (0.01 of a whole token, the small vault's smallest size), is replaced by the whole-token size in the same place of the small vault's ladder (0.01, 0.1 or 1 token in the first three places), the reference size by the same rule, and the sizes are then sorted with a repeated size dropped; a mint without decimals has a floor of 1 unit, which every share meets.
-- Alternatives: Raising each such size to the floor itself, which leaves fewer distinct sizes and a reference size of 0.01 token for a vault the whole-token ladder would trade 1 token in; lowering the small-vault threshold, which moves the same rounding to another vault size; counting a sale back that rounds to nothing as not run, which hides a strategy that pays nothing for small sales.
+- Answer: A share of the vault under the dust floor, `DUST_FLOOR_HUNDREDTHS` (0.01 of a whole token, the small vault's smallest size), is raised to the floor, the reference size by the same rule, and a repeated size is dropped; the floor is never above the ladder's largest share (50,000 parts per million), so no size passes what that ladder would trade, and a mint without decimals has a floor of 1 unit, which every share meets. The ladder keeps its order and moves with the vault: a vault of 2,150,000 units of a 6-decimal mint trades 0.01, 0.0215 and 0.1075 tokens with 0.01 as the reference, and one a thousandth smaller or larger than 10 tokens trades nearly the same.
+- Alternatives: Replacing each such size by the whole-token size in its place (0.01, 0.1 or 1 token), which made the reference 1 token, 10% of a vault of 9.99 tokens and over its largest share, against 0.01 token at 10 tokens, so a small change in the vault moved the reference a hundredfold; lowering the small-vault threshold, which moves the same rounding to another vault size; counting a sale back that rounds to nothing as not run, which hides a strategy that pays nothing for small sales.
 - Specified in: [`docs/spec/pipescope-canary.md`, The money side and sizes](spec/pipescope-canary.md#the-money-side-and-sizes)
 - Changes by: build-time constant
 - Status: default
@@ -4770,8 +4770,8 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### HOOK-54: Which of the two unlocked a token
 
 - Question: How does Aviary know whether a token was unlocked by its goal or by its deadline, which the config does not record?
-- Answer: From the chain when it can tell (before the deadline only the goal could; past it with the goal still short now only the deadline could), and otherwise from the line the hook logs in the unlock's transaction, found in the unlock PDA's short history.
-- Alternatives: Always reading the unlock's log, an RPC history read on every view of an unlocked token; recording the reason in the config, a change to the hook's account layout.
+- Answer: From the chain when it can tell (before the deadline only the goal could; past it with the goal still short now only the deadline could), and otherwise from the line the hook logs in the unlock's transaction, found among the unlock PDA's transactions whose block time is the config's `unlocked_at`, paging back past later transactions that name the PDA, which anyone may send.
+- Alternatives: Always reading the unlock's log, an RPC history read on every view of an unlocked token; recording the reason in the config, a change to the hook's account layout; reading only the PDA's newest transactions, which anyone could push the unlock out of by naming the PDA in their own.
 - Specified in: [`docs/spec/containment-hook.md`, In Aviary](spec/containment-hook.md#in-aviary)
 - Changes by: spec only
 - Status: default

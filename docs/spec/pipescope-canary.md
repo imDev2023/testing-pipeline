@@ -75,8 +75,8 @@ What came back clean is evidence too:
 - The money side is wrapped SOL when the market has it; otherwise it is the mint whose vault holds the smallest share of that mint's supply.
 - With wrapped SOL the sizes are 0.00001, 0.001, 0.01, 0.1, 1 and 10 SOL, and the **reference size** is 0.01 SOL.
 - Without wrapped SOL the sizes are 1, 100, 1,000, 10,000 and 50,000 parts per million of the money vault, and the reference size is 1,000 parts per million; when that vault holds under 2,000,000 units they are 0.01, 0.1, 1, 10 and 100 whole tokens and the reference size is 1 token.
-- A share of the vault under the **dust floor**, 0.01 of a whole token, is replaced by the whole-token size in its place (the first three places take 0.01, 0.1 and 1 token), and the reference size by the same rule; the sizes are then sorted and a repeated size dropped (`CANARY-49`).
-  A vault just over 2,000,000 units made 1 part per million a size of 2 base units, whose sale back rounded to nothing and failed the exit test of a sound market (the goal demo token's, 2026-11-27); the floor sizes such a vault like a slightly smaller one.
+- A share of the vault under the **dust floor**, 0.01 of a whole token, is raised to it, the reference size by the same rule, and a repeated size is dropped; the floor never passes the ladder's largest share, so the ladder keeps its order and moves with the vault (`CANARY-49`).
+  A vault just over 2,000,000 units made 1 part per million a size of 2 base units, whose sale back rounded to nothing and failed the exit test of a sound market (the goal demo token's, 2026-11-27).
 - When the reference size cannot be bought and sold back, the largest size that can stands in for it and the result says so.
 - Every size is reported beside its share of the money vault, because 10 SOL into a devnet pool holding 0.2 SOL buys the whole pool.
 - Mainnet sizes, including a size equal to Jupiter's 500 dollar routing benchmark, are for the mainnet plan.
@@ -297,7 +297,7 @@ A change to any of them changes the `harness` version that every Canary result c
 | --- | --- | --- |
 | Sizes with wrapped SOL, and the reference size | 0.00001, 0.001, 0.01, 0.1, 1 and 10 SOL; 0.01 SOL | `CANARY-06` |
 | Sizes without wrapped SOL, the small-vault threshold and the reference sizes | 1, 100, 1,000, 10,000 and 50,000 parts per million of the money vault, or 0.01 to 100 whole tokens under 2,000,000 units; 1,000 parts per million, or 1 token | `CANARY-07` |
-| Dust floor | 0.01 of a whole token, the small vault's smallest size | `CANARY-49` |
+| Dust floor | 0.01 of a whole token, the small vault's smallest size, never above the largest share of the vault | `CANARY-49` |
 | Waits | the same slot, the next slot, 10 seconds, 1 minute, 10 minutes, 1 hour, 1 day, 3 days and 30 days | `CANARY-08` |
 | Launch-clock offsets | creation, then 10 seconds, 1 minute, 10 minutes, 1 hour and 1 day after it | `CANARY-09` |
 | Clock rates | 2.5 slots a second, 432,000 slots an epoch | `CANARY-08` |

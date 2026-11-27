@@ -20,8 +20,8 @@ import { MintLabel } from "../MintLabel";
 import type { Loaded } from "../Panel";
 import table from "../ListingTable.module.css";
 import { CandleChart } from "./CandleChart";
-import type { MarketContainment } from "terminal-api/containment";
 import { TradeBox } from "./TradeBox";
+import { useLiveContainment } from "@/products/containment/live";
 import { StrandedPanel, type CanaryRead } from "../canary/MarketCanary";
 import styles from "./Market.module.css";
 
@@ -33,7 +33,9 @@ const plural = (n: number, one: string, many: string) => `${formatInteger(n)} ${
 type TradesState = { list: Trade[]; next: string | null };
 const NONE_HELD: Held = { trades: [], replaces: null };
 
-export function MarketLive({ market, canary, containment = null }: { market: Market; canary: CanaryRead; containment?: MarketContainment | null }) {
+export function MarketLive({ market, canary }: { market: Market; canary: CanaryRead }) {
+  // The trade box's rule follows the containment panel's latest read (#76).
+  const containment = useLiveContainment()?.shown ?? null;
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();

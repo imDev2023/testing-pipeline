@@ -9,7 +9,7 @@ import type { Market, MintFacts } from "terminal-api/contract";
 import { describe, expect, it } from "vitest";
 import { WalletProvider } from "@/components/wallet/WalletProvider";
 import { ContainmentPanelBody } from "@/products/containment/ContainmentPanel";
-import { CONTAINED_RULE, containedLaunchRefusal, containedRuleFor, deadlineWait, timeLeft } from "@/products/containment/view";
+import { CONTAINED_RULE, containedLaunchRefusal, containedRuleFor, deadlineWait, newlyUnlocked, showsUnlocked, timeLeft } from "@/products/containment/view";
 
 const TOKEN = "CnTd1QhbTzyCLTVCQXrVBmy1xKkRjqF1Gw5k1y2nEaHw";
 const WSOL = "So11111111111111111111111111111111111111112";
@@ -155,6 +155,42 @@ describe("the containment panel", () => {
     expect(byGoal).not.toContain(CONTAINED_RULE);
     expect(render({ status: "unlocked", unlocked_at: NOW - 60, unlocked_by: "deadline", deadline: NOW - 120 })).toContain("Unlocked on 27 Nov 2026, 19:59 UTC, by its deadline.");
     expect(html(read({ status: "unlocked", unlocked_at: NOW, unlocked_by: "goal" }))).not.toMatch(/<button[^>]*[Uu]nlock/);
+  });
+});
+
+describe("a wallet in two recipient slots", () => {
+  // The tax AMM lets one wallet hold two slots; the panel keys each line by its slot, not its wallet.
+  it("is listed once per slot, each with its own share", () => {
+    const text = render({
+      tax: {
+        ...contained.tax!,
+        recipients: [
+          { wallet: LAUNCHER, of_tax_bps: 4_500, launcher: true },
+          { wallet: LAUNCHER, of_tax_bps: 2_700, launcher: true },
+          { wallet: OTHER, of_tax_bps: 1_800, launcher: false },
+        ],
+      },
+    });
+    expect(text).toMatch(/the launcher, 45% of every tax; .*the launcher, 27%; .*18%;/);
+  });
+});
+
+describe("reading again after an unlock", () => {
+  const unlocked = read({ status: "unlocked", unlocked_at: NOW, unlocked_by: "goal", due: null });
+  it("tells the facts and the page to read again only when a read shows unlocked a mint the last read showed contained", () => {
+    expect(newlyUnlocked(read(), unlocked)).toBe(true);
+    expect(newlyUnlocked(read(), read())).toBe(false);
+    expect(newlyUnlocked(unlocked, unlocked)).toBe(false);
+    // A page whose own read failed has no last read: the panel's first read then changes nothing.
+    expect(newlyUnlocked(null, unlocked)).toBe(false);
+    expect(newlyUnlocked(read(), { ...unlocked, contained: [{ ...unlocked.contained[0]!, mint: OTHER }] })).toBe(false);
+  });
+
+  it("waits for a read that shows the unlocked mint unlocked", () => {
+    expect(showsUnlocked(unlocked, TOKEN)).toBe(true);
+    expect(showsUnlocked(read(), TOKEN)).toBe(false);
+    expect(showsUnlocked(unlocked, OTHER)).toBe(false);
+    expect(showsUnlocked(null, TOKEN)).toBe(false);
   });
 });
 

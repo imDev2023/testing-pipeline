@@ -121,3 +121,9 @@ export const SLOT_MS_ESTIMATE = 400;
  * reached; it also reads again a second after the deadline passes.
  */
 export const CONTAINMENT_REFRESH_MS = 30_000;
+
+/**
+ * After an unlock confirms, the containment panel reads again every `everyMs`, at most `times` times,
+ * until its read shows the token unlocked, since the RPC behind the API can serve a slot or two late.
+ */
+export const CONTAINMENT_AFTER_UNLOCK = { everyMs: 2_000, times: 10 } as const;

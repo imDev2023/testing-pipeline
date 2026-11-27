@@ -14,7 +14,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { MarketContainment, type ContainedMint } from "terminal-api/containment";
 import type { Market, MarketMint } from "terminal-api/contract";
 import { getFromApi } from "@/api";
-import { CONTAINMENT_REFRESH_MS } from "@/config";
+import { CONTAINMENT_AFTER_UNLOCK, CONTAINMENT_REFRESH_MS } from "@/config";
 import { formatDate, formatInteger } from "@/format";
 import { FactList, FactPart } from "@/components/facts/Facts";
 import { FACTS_STALE_EVENT } from "@/components/facts/MarketFacts";
@@ -24,7 +24,8 @@ import { PanelFrame, type Loaded } from "@/components/Panel";
 import { ShortAddress } from "@/components/ShortAddress";
 import { aboutSlots } from "../taxAmm/TaxPanel";
 import { Unlock } from "./Unlock";
-import { CONTAINED_RULE, deadlineWait, goalShare, timeLeft } from "./view";
+import { useLiveContainment } from "./live";
+import { CONTAINED_RULE, deadlineWait, goalShare, newlyUnlocked, showsUnlocked, timeLeft } from "./view";
 import styles from "./Containment.module.css";
 
 export type ContainmentRead = { ok: true; value: MarketContainment } | { ok: false; message: string };
@@ -35,20 +36,43 @@ const listed = (items: string[]) => (items.length < 2 ? items.join("") : `${item
 
 /**
  * The panel, from the page's own read and then its own: read again every `CONTAINMENT_REFRESH_MS`, as
- * the deadline passes and after an unlock lands. A market with no contained token shows nothing.
+ * the deadline passes and after an unlock lands. A market with no contained token shows nothing, nor
+ * does one whose reads failed before any showed it a home market, as most tax markets never are. Each
+ * read goes to the trade box's rule, and one that sees a token unlock has the facts and the page read
+ * again.
  */
 export function ContainmentPanel({ market, initial }: { market: Market; initial: ContainmentRead }) {
   const router = useRouter();
+  const live = useLiveContainment();
   const [state, setState] = useState<Loaded<MarketContainment>>(initial.ok ? { status: "loaded", data: initial.value } : { status: "failed", message: initial.message });
   const asked = useRef(0);
-  const load = useCallback((): Promise<unknown> => {
+  const last = useRef<MarketContainment | null>(initial.ok ? initial.value : null);
+  const [home, setHome] = useState(initial.ok && initial.value.contained.length > 0);
+  const publish = live?.publish;
+  const load = useCallback((): Promise<MarketContainment | null> => {
     const mine = ++asked.current;
     return getFromApi(`/v1/markets/${encodeURIComponent(market.address)}/containment`, MarketContainment).then(
-      (data) => mine === asked.current && setState({ status: "loaded", data }),
+      (data) => {
+        if (mine !== asked.current) return null;
+        const before = last.current;
+        last.current = data;
+        if (data.contained.length) setHome(true);
+        setState({ status: "loaded", data });
+        publish?.(data);
+        // The API reads an unlocked mint again before it answers, so the facts panel's trust flags follow now.
+        if (newlyUnlocked(before, data)) {
+          window.dispatchEvent(new Event(FACTS_STALE_EVENT));
+          router.refresh();
+        }
+        return data;
+      },
       // A failed reading again keeps what is shown; only a panel with nothing to show shows the failure.
-      (e: unknown) => mine === asked.current && setState((now) => (now.status === "loaded" ? now : { status: "failed", message: e instanceof Error ? e.message : String(e) })),
+      (e: unknown) => {
+        if (mine === asked.current) setState((now) => (now.status === "loaded" ? now : { status: "failed", message: e instanceof Error ? e.message : String(e) }));
+        return null;
+      },
     );
-  }, [market.address]);
+  }, [market.address, publish, router]);
 
   // When the page's own read failed, the panel tries once more on its own before it shows the failure's Try again.
   const retried = useRef(initial.ok);
@@ -73,18 +97,27 @@ export function ContainmentPanel({ market, initial }: { market: Market; initial:
     return () => clearTimeout(timer);
   }, [wait, load]);
 
-  const unlocked = useCallback(() => {
-    // The API reads the unlocked mint again before it answers, so the facts panel's trust flags follow once it has; the trade box's rule follows with the page.
-    void load().finally(() => {
-      window.dispatchEvent(new Event(FACTS_STALE_EVENT));
-      router.refresh();
-    });
-  }, [load, router]);
+  // Once an unlock confirms, read again until the read shows it, since the API's RPC can be a slot or two behind.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => void (mounted.current = false);
+  }, []);
+  const unlocked = useCallback(
+    async (mint: string) => {
+      for (let i = 0; i < CONTAINMENT_AFTER_UNLOCK.times && mounted.current; i++) {
+        if (showsUnlocked(await load(), mint)) return;
+        await new Promise((done) => setTimeout(done, CONTAINMENT_AFTER_UNLOCK.everyMs));
+      }
+    },
+    [load],
+  );
 
   if (shown && shown.contained.length === 0) return null;
+  if (state.status === "failed" && !home) return null;
   return (
     <PanelFrame title="Containment" what="whether this market's token is contained" state={state} retry={() => void load()}>
-      {(read) => read.contained.map((entry) => <ContainmentPanelBody key={entry.mint} market={market} read={read} entry={entry} onUnlocked={unlocked} />)}
+      {(read) => read.contained.map((entry) => <ContainmentPanelBody key={entry.mint} market={market} read={read} entry={entry} onUnlocked={() => void unlocked(entry.mint)} />)}
     </PanelFrame>
   );
 }
@@ -169,7 +202,8 @@ export function ContainmentPanelBody({ market, read, entry, onUnlocked }: { mark
                 value: (
                   <span className={styles.recipients}>
                     {entry.tax.recipients.map((r, i) => (
-                      <span key={r.wallet}>
+                      // A wallet may hold two recipient slots, so each line is keyed by its slot.
+                      <span key={i}>
                         <ShortAddress address={r.wallet} />
                         {r.launcher ? ", the launcher" : ""}, {percent(r.of_tax_bps)}
                         {i === 0 ? " of every tax" : ""};{" "}

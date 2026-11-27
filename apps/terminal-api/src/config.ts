@@ -313,8 +313,13 @@ export const LENDING_AMM = { create: { lpFeeBps: 30, lentIndex: 1 }, historyPage
  * H049, which the hook leaves to Aviary rather than set a floor on chain). A goal under a tenth of
  * the home market's quote reserve (real and virtual), the value containment guards, costs an outsider
  * about that much tax to force the unlock; a deadline under a week after the binding frees the token
- * within days whatever happens. Both are defaults the owner and MetalLegBob may change. And how many of
- * an unlock PDA's newest transactions are searched for the unlock's log, when only its log can say
- * whether the goal or the deadline unlocked a token: `bind` and `unlock` alone name the PDA.
+ * within days whatever happens. Both are defaults the owner and MetalLegBob may change. And how the
+ * unlock's log is found, when only its log can say whether the goal or the deadline unlocked a token:
+ * among the unlock PDA's transactions whose block time is within `windowSeconds` of the config's
+ * `unlocked_at` (the block's own clock), paging back `pageSize` signatures at a time past any later
+ * transaction that names the PDA, which anyone may send, for at most `pages` pages.
  */
-export const CONTAINMENT = { weakTerms: { goalOfQuoteReserveBps: 1_000, deadlineMinSeconds: 7 * 24 * 60 * 60 }, unlockHistory: 20 } as const;
+export const CONTAINMENT = {
+  weakTerms: { goalOfQuoteReserveBps: 1_000, deadlineMinSeconds: 7 * 24 * 60 * 60 },
+  unlockSearch: { pageSize: 1_000, pages: 5, windowSeconds: 2 },
+} as const;
