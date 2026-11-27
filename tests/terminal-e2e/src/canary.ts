@@ -13,9 +13,11 @@
 // the new recording's moment. On live devnet a strategy upgraded since is skipped, and says so, and a
 // market that already has results of its own, as on a local run with Canary's container, keeps them.
 //
-// The curve's upgrade stranded the only markets whose buyer could not sell back, so the trade box's
-// exit-test notice is shown from the API's own answer for the open bonding curve of 2026-11-23, before
-// its upgrade (fixtures/canary-notice.json, the web's test fixture), served in place of the API's.
+// The curve's upgrade stranded the only markets whose buyer could not sell back (the sweeps of
+// 2026-11-23 and 2026-11-24 found no other), so no page here shows the trade box's exit-test notice: the
+// market page reads Canary on the server, where no test can stand in for the API's answer. The notice is
+// covered by the web's own tests (test/canary.test.tsx, test/trade.test.ts), the API's wording of it
+// by test/canary-pages.test.ts, and the page itself by src/canary-devnet.spec.ts whenever devnet has one.
 import { readFileSync } from "node:fs";
 import { createDb, finishCanaryRun, programVersions, readCanaryLatest, startCanaryRun, storeCanaryMarket, type CanaryRecord } from "terminal-db";
 import { desc, eq } from "drizzle-orm";
@@ -30,9 +32,6 @@ export const CANARY_MARKETS = Object.fromEntries(Object.entries(RECORDS).map(([l
 >;
 /** The bonding curve's strategy, two of whose markets above are stranded and refusing. */
 export const CANARY_CURVE_STRATEGY = RECORDS.refusing![0]!.strategy!;
-
-/** The API's answer for the open bonding curve's market before the curve's upgrade, whose exit-test notice a page shows. */
-export const CANARY_NOTICE = JSON.parse(readFileSync(`${import.meta.dirname}/../fixtures/canary-notice.json`, "utf8")) as { market: string };
 
 /** Stores the records of each market whose strategy's current version is the one they were run on. */
 export async function seedCanaryResults(): Promise<void> {
