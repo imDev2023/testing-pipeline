@@ -117,6 +117,10 @@ describe("the containment panel", () => {
     expect(render()).toContain("Outside the pool 200M CTD CnTd...EaHw, 20% of the supply. Its holders can sell it into the 2.5 SOL buyers paid into the pool.");
   });
 
+  it("says a sliver of the supply outside the pool is under 0.01%, not 0%", () => {
+    expect(render({ supply: { total: "1000000000000000000", in_pool: "999983670000000000", outside: "16330000000000", quote_in_pool: "489800000" } })).toContain("Outside the pool 16,330 CTD CnTd...EaHw, under 0.01% of the supply.");
+  });
+
   it("warns on weak terms, and only then", () => {
     expect(render()).not.toContain("Weak terms");
     expect(render({ weak: { goal: true, deadline: true } })).toContain(

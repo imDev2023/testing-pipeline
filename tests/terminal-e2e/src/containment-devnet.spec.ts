@@ -11,12 +11,13 @@
 //
 // It sends real devnet transactions, so its project exists only when asked for (`pnpm --filter
 // terminal-e2e containment:devnet`, E2E_CONTAINMENT_DEVNET), never in CI. The two tokens come from
-// E2E_CONTAINED_GOAL and E2E_CONTAINED_DEADLINE, their mints; every signature is written to
-// test-results/containment-devnet.json for the pull request.
+// E2E_CONTAINED_GOAL and E2E_CONTAINED_DEADLINE, their mints; E2E_CONTAINED_TRADE is how much of the
+// quote mint each round trip toward the goal pays in (0.5 by default; the deadline token's trade is a
+// tenth of it). Every signature is written to test-results/containment-devnet.json for the pull request.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { address, assertAccountExists, createSolanaRpc, fetchEncodedAccount, getBase64Encoder, type Address } from "@solana/kit";
-import { decodeConfig, findConfigPda, type Config } from "containment-hook-scripts/client/index.ts";
+import { decodeConfig, findConfigPda, findUnlockPda, type Config } from "containment-hook-scripts/client/index.ts";
 import { decodeTaxMarket } from "tax-amm-scripts/client/index.ts";
 import { TradesPage } from "terminal-api/contract";
 import { screenshot } from "./screenshot";
@@ -24,6 +25,7 @@ import { API } from "./target";
 import { connectTestWallet, installTestWallet, testTraderSigner, TEST_TRADER } from "./wallet";
 
 const rpc = () => createSolanaRpc(process.env.RPC_URL ?? "");
+const TRADE = process.env.E2E_CONTAINED_TRADE ?? "0.5";
 const CONTAINED_RULE = "This token can only be bought and sold in this market until it unlocks, and cannot be sent to another wallet.";
 const SHOTS = [
   { width: 1440, height: 900, theme: "light" },
@@ -171,6 +173,25 @@ async function unlock(page: Page, mint: string, by: "goal" | "deadline") {
   return signature;
 }
 
+/** The newest successful transaction of the token's unlock PDA, which only `bind` and `unlock` name: its unlock, once it has one. */
+async function unlockSignature(mint: string): Promise<string> {
+  const [unlockPda] = await findUnlockPda({ mint: address(mint) });
+  const [newest] = (await rpc().getSignaturesForAddress(unlockPda, { limit: 5, commitment: "confirmed" }).send()).filter((s) => s.err === null);
+  return newest!.signature;
+}
+
+/** A token a run already unlocked: the panel says when and by which, with no button; the chain agrees; the facts carry neither flag. */
+async function alreadyUnlocked(page: Page, mint: string, by: "goal" | "deadline") {
+  await expect(panel(page).getByText(new RegExp(`^Unlocked on \\d{1,2} [A-Z][a-z]{2} \\d{4}, \\d{2}:\\d{2} UTC, ${by === "goal" ? "by reaching its goal" : "by its deadline"}\\.`))).toBeVisible();
+  await expect(panel(page).getByRole("button", { name: /unlock/i })).toHaveCount(0);
+  expect((await onChain(mint)).hook).toEqual({ authority: false, program: false });
+  await expect(tokenFacts(page).getByText("transfer-hook", { exact: true })).toHaveCount(0);
+  await expect(tokenFacts(page).getByText("transfer-hook-authority", { exact: true })).toHaveCount(0);
+  await expect(box(page).getByText(CONTAINED_RULE)).toHaveCount(0);
+  await shots(page, `containment-${by}-unlocked`);
+  return unlockSignature(mint);
+}
+
 /** A contained token's home market, from Aviary's API. */
 async function homeOf(mint: string): Promise<string> {
   const { config } = await onChain(mint);
@@ -200,7 +221,7 @@ test.describe("the containment hook in Aviary on devnet", () => {
     await expect(tokenFacts(page).getByText("transfer-hook", { exact: true })).toBeVisible();
     await expect(tokenFacts(page).getByText("transfer-hook-authority", { exact: true })).toBeVisible();
     await shots(page, "containment-contained");
-    const trades = await buyAndSell(page, "0.05");
+    const trades = await buyAndSell(page, String(Number(TRADE) / 10));
     record.deadline_trades = trades;
     record.deadline_sell = await sellCarriedNoFee(market, trades.sell);
     save();
@@ -212,18 +233,26 @@ test.describe("the containment hook in Aviary on devnet", () => {
     const market = await homeOf(goalMint);
     record.goal_market = market;
     await openHome(page, market);
-    await panelMatchesChain(page, goalMint);
-    await expect(panel(page).getByRole("button", { name: /unlock/i })).toHaveCount(0);
+    // A run resumed after the button already unlocked it checks the unlocked state and records that unlock.
+    if ((await onChain(goalMint)).config.unlockedAt.__option === "Some") {
+      record.goal_unlock = await alreadyUnlocked(page, goalMint, "goal");
+      record.goal_resumed = true;
+      return save();
+    }
+    const before = await panelMatchesChain(page, goalMint);
+    // Before the goal is reached there is no Unlock button (a run resumed after the goal skips this).
+    if (before.collected < before.config.unlockGoal) await expect(panel(page).getByRole("button", { name: /unlock/i })).toHaveCount(0);
     const rounds: unknown[] = [];
     for (let round = 0; round < 4; round++) {
       const { config, collected } = await onChain(goalMint);
       if (collected >= config.unlockGoal) break;
-      const trades = await buyAndSell(page, "0.5");
+      const trades = await buyAndSell(page, TRADE);
       rounds.push(trades);
       record.goal_rounds = rounds;
       save();
+      // The test wallet stays connected across the reload.
       await page.reload();
-      await connectTestWallet(page, page.getByRole("banner").getByRole("button", { name: "Connect wallet" }));
+      await expect(panel(page).getByText(/^Read from the chain at slot [\d,]+\./)).toBeVisible();
     }
     const { config, collected } = await onChain(goalMint);
     expect(collected).toBeGreaterThanOrEqual(config.unlockGoal);

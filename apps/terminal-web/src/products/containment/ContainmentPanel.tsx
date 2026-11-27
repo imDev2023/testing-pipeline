@@ -50,6 +50,14 @@ export function ContainmentPanel({ market, initial }: { market: Market; initial:
     );
   }, [market.address]);
 
+  // When the page's own read failed, the panel tries once more on its own before it shows the failure's Try again.
+  const retried = useRef(initial.ok);
+  useEffect(() => {
+    if (retried.current) return;
+    retried.current = true;
+    void load();
+  }, [load]);
+
   const shown = state.status === "loaded" ? state.data : null;
   const contained = shown?.contained.some((m) => m.status === "contained") ?? false;
   useEffect(() => {
@@ -93,6 +101,7 @@ export function ContainmentPanelBody({ market, read, entry, onUnlocked }: { mark
   const share = goalShare(entry);
   const deadline = new Date(entry.deadline * 1000);
   const isContained = entry.status === "contained";
+  const [reviewing, setReviewing] = useState(false);
 
   return (
     <div className={styles.panel}>
@@ -138,12 +147,15 @@ export function ContainmentPanelBody({ market, read, entry, onUnlocked }: { mark
             },
           ]}
         />
-        {isContained && entry.due && (
+        {/* The review stays open once its unlock lands, with its confirmation, though the token is no longer due. */}
+        {((isContained && entry.due) || reviewing) && (
           <div className={styles.due}>
-            <p>
-              The unlock is due: {entry.due === "goal" ? "the goal is reached." : "the deadline has passed."} Anyone may send the unlock from their own wallet; it frees the token for good.
-            </p>
-            <Unlock market={market} mint={entry.mint} onUnlocked={onUnlocked} />
+            {isContained && entry.due && (
+              <p>
+                The unlock is due: {entry.due === "goal" ? "the goal is reached." : "the deadline has passed."} Anyone may send the unlock from their own wallet; it frees the token for good.
+              </p>
+            )}
+            <Unlock market={market} mint={entry.mint} onUnlocked={onUnlocked} onReviewing={setReviewing} />
           </div>
         )}
       </FactPart>
@@ -247,9 +259,10 @@ export function ContainmentPanelBody({ market, read, entry, onUnlocked }: { mark
 /** The goal's share collected in words: "54.6%", and "under 0.1%" for some tax but less than a tenth of a percent. */
 const shareWords = (collected: string, share: number | null) => (share === 0 && BigInt(collected) > 0n ? "under 0.1%" : `${share}%`);
 
-/** A part of the supply in percent, to at most two decimal places: "20%". */
+/** A part of the supply in percent, to at most two decimal places: "20%", and "under 0.01%" for some but less than a hundredth of a percent. */
 function supplyShare(part: string, total: string): string {
   const whole = BigInt(total);
   if (whole === 0n) return "0%";
-  return `${Number((BigInt(part) * 10_000n) / whole) / 100}%`;
+  const hundredths = (BigInt(part) * 10_000n) / whole;
+  return hundredths === 0n && BigInt(part) > 0n ? "under 0.01%" : `${Number(hundredths) / 100}%`;
 }

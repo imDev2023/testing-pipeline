@@ -15,7 +15,8 @@ import { useReview } from "@/components/forms/useReview";
 import { useWallet } from "@/components/wallet/WalletProvider";
 import styles from "./Containment.module.css";
 
-export function Unlock({ market, mint, onUnlocked }: { market: Market; mint: string; onUnlocked: () => void }) {
+/** `onReviewing` hears when a review opens and when it is left, so the panel keeps it on screen after its unlock lands. */
+export function Unlock({ market, mint, onUnlocked, onReviewing }: { market: Market; mint: string; onUnlocked: () => void; onReviewing?: (open: boolean) => void }) {
   const { account, openMenu } = useWallet();
   const trader = account?.address ?? null;
   const [open, setOpen] = useState(false);
@@ -32,6 +33,7 @@ export function Unlock({ market, mint, onUnlocked }: { market: Market; mint: str
             aria-label="Unlock this token"
             onClick={() => {
               setOpen(true);
+              onReviewing?.(true);
               start();
             }}
           >
@@ -56,6 +58,7 @@ export function Unlock({ market, mint, onUnlocked }: { market: Market; mint: str
       onBack={() => {
         handlers.onBack();
         setOpen(false);
+        onReviewing?.(false);
       }}
     />
   );
