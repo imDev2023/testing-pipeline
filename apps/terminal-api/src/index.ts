@@ -22,6 +22,7 @@ import { keeperRoutes } from "./keeper";
 import { marketKeeperRoutes } from "./marketKeeper";
 import { ROOM_HEADER, roomOf } from "./roomCore";
 import { limitReads } from "./rateLimits";
+import { containmentRoutes } from "./products/containment/routes";
 import { lendingAmmRoutes } from "./products/lendingAmm/routes";
 import { actionRoutes } from "./trading/actionRoutes";
 import { tradingRoutes } from "./trading/routes";
@@ -99,6 +100,7 @@ marketKeeperRoutes(app);
 tradingRoutes(app);
 actionRoutes(app);
 lendingAmmRoutes(app);
+containmentRoutes(app);
 
 /**
  * The jobs that have been built, by name; each later ticket adds its own, and ./config says how

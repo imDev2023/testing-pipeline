@@ -6,12 +6,13 @@ import styles from "@/components/heads/Head.module.css";
 import bands from "@/components/market/Market.module.css";
 import { MarketFacts } from "@/components/facts/MarketFacts";
 import { MarketLive } from "@/components/market/MarketLive";
+import { ContainmentLive } from "@/products/containment/live";
 import { MarketLowBand } from "@/components/market/MarketLowBand";
 import { StrategyName } from "@/components/StrategyName";
 import { MintLabel } from "@/components/MintLabel";
 import { formatDate, shortAddress } from "@/format";
 import { ROUTES } from "@/routes";
-import { readMarket, readMarketCanary, readStrategyExplanation } from "@/serverReads";
+import { readMarket, readMarketCanary, readMarketContainment, readStrategyExplanation } from "@/serverReads";
 import { StrandedHead, UpgradeNotice, type CanaryRead } from "@/components/canary/MarketCanary";
 import type { Market, MarketMint } from "terminal-api/contract";
 
@@ -46,20 +47,23 @@ export default async function MarketPage({ params }: Props) {
     );
   }
   const value = read.value;
-  const explanation = await readStrategyExplanation(value.strategy);
+  const [explanation, containment] = await Promise.all([readStrategyExplanation(value.strategy), readMarketContainment(value.address, value.strategy)]);
   const mint = (address: string) => value.mints.find((m) => m.mint === address)!;
   const base = mint(value.base_mint);
   const quote = mint(value.quote_mint);
   return (
     <div className={bands.page}>
       <MarketHead market={value} base={base} quote={quote} canary={canary} explained={!explanation.ok || explanation.value.explanation !== null} />
-      <div className={`${bands.top} ${bands.withTrade}`}>
-        {/* The chart's length and Flip are read from the page's address. */}
-        <Suspense fallback={null}>
-          <MarketLive market={value} canary={canary} />
-        </Suspense>
-      </div>
-      <MarketLowBand market={value} explanation={explanation} facts={<MarketFacts market={value.address} canary={canary} />} />
+      {/* The containment panel's reads reach the trade box's rule through this (#76). */}
+      <ContainmentLive initial={containment?.ok ? containment.value : null}>
+        <div className={`${bands.top} ${bands.withTrade}`}>
+          {/* The chart's length and Flip are read from the page's address. */}
+          <Suspense fallback={null}>
+            <MarketLive market={value} canary={canary} />
+          </Suspense>
+        </div>
+        <MarketLowBand market={value} explanation={explanation} containment={containment} facts={<MarketFacts market={value.address} canary={canary} />} />
+      </ContainmentLive>
     </div>
   );
 }

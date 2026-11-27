@@ -4,6 +4,8 @@
 import { notFound } from "next/navigation";
 import { cache } from "react";
 import { CanaryResults, CanaryRollup, Market, StrategyDetail, StrategyExplanation } from "terminal-api/contract";
+import { TAX_AMM_PROGRAM_ADDRESS } from "tax-amm-scripts/client/index.ts";
+import { MarketContainment } from "terminal-api/containment";
 import { ApiFailure, getFromApi } from "./api";
 
 /** The thing at an address, the 404 page when the API knows none, or the failure to show. */
@@ -40,3 +42,12 @@ export const readVersionCanary = cache((program: string, deploySlot: number) => 
  * under the head knows whether the new version has one; on a failure the panel loads it on its own.
  */
 export const readStrategyExplanation = cache((program: string) => readOrFailure(() => getFromApi(`/v1/strategies/${encodeURIComponent(program)}/explanation`, StrategyExplanation)));
+
+/**
+ * The containment of a market that can be a contained token's home market, read with the page so the
+ * panel and the trade box's rule agree from the first paint (#76): only a tax AMM market can be a home
+ * market (the containment hook's `TAX_AMM_PROGRAM_ID`), so any other is null without asking.
+ */
+export const readMarketContainment = cache((address: string, strategy: string) =>
+  strategy === TAX_AMM_PROGRAM_ADDRESS ? readOrFailure(() => getFromApi(`/v1/markets/${encodeURIComponent(address)}/containment`, MarketContainment)) : Promise.resolve(null),
+);

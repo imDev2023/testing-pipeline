@@ -8,7 +8,8 @@
 // outside accounts it names (`GET /v1/markets/{market}/state`, PIPESCOPE-146).
 //
 // Filled by the products' Aviary tickets: the lending AMM's (#88), the buy wall AMM's (#57) and the
-// tax AMM's (#75); the containment hook's (#76) adds its own.
+// tax AMM's (#75). The containment hook is not a strategy, so its panel (#76) is not keyed here: the
+// market page's lower band shows it first on a contained token's home market (HOOK-55).
 import type { ComponentType } from "react";
 import { TAX_AMM_PROGRAM_ADDRESS } from "tax-amm-scripts/client/index.ts";
 import type { Market } from "terminal-api/contract";

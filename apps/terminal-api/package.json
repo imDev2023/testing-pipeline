@@ -11,7 +11,8 @@
         "./config": "./src/config.ts",
         "./amounts": "./src/trading/amounts.ts",
         "./products/buy-wall": "./src/products/buyWall.ts",
-        "./lending-amm": "./src/products/lendingAmm/contract.ts"
+        "./lending-amm": "./src/products/lendingAmm/contract.ts",
+        "./containment": "./src/products/containment/contract.ts"
     },
     "scripts": {
         "dev": "node scripts/dev.ts",
@@ -27,6 +28,7 @@
         "@solana-program/token-2022": "0.20.0",
         "@solana/kit": "8.6.0",
         "buy-wall-amm-scripts": "workspace:*",
+        "containment-hook-scripts": "workspace:*",
         "drizzle-orm": "0.45.4",
         "hono": "4.13.20",
         "keeper-jobs": "workspace:*",

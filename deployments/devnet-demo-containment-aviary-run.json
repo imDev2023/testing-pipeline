@@ -1,0 +1,42 @@
+{
+  "goal_mint": "71UT1HcBf1VE6y6phQaVBy3GZgnijEvRJ2xPv4QGR99i",
+  "deadline_mint": "CZBmorSG2sf69MwCE2fTnQCUrqpWKPP6cWQWwgSE1iRe",
+  "deadline_market": "1MRcMZKLQWztmNFymjMqsXVBG4fkwkK3tmtd1FWZUti",
+  "deadline_trades": {
+    "buy": "4wPgGXG1MJqFi9tNSYs8LaUNU1yPqCZ5hqdX7tbBvgqgZK6aN32JSSEt4G3YyUqsJb56TJ7oJ3ZfrRT7xMnWUwk9",
+    "sell": "67bDy3QLtpF4YEC782nbuqdQDNkCgZ51Zyd2AkLVmcMkPv44KxEjPbyuLa1RMg8BemEf2f6KsWb9RcXwfbEWMAF7"
+  },
+  "deadline_sell": {
+    "signature": "67bDy3QLtpF4YEC782nbuqdQDNkCgZ51Zyd2AkLVmcMkPv44KxEjPbyuLa1RMg8BemEf2f6KsWb9RcXwfbEWMAF7",
+    "event_index": 0,
+    "slot": 526979981,
+    "block_index": 7,
+    "block_time": "2026-11-27T19:57:38.000Z",
+    "market": "1MRcMZKLQWztmNFymjMqsXVBG4fkwkK3tmtd1FWZUti",
+    "trader": "E69PqdUigwXRBdCBR5LfkACb9f342QsRK8oRGGdtJnAW",
+    "input_mint": "CZBmorSG2sf69MwCE2fTnQCUrqpWKPP6cWQWwgSE1iRe",
+    "output_mint": "AsFVjoTckjT6uHixGsB88hwWpGnMXYLjVcCJQkxSyoMu",
+    "mode": "exact_in",
+    "net_sent": "64338274915",
+    "received": "1833818",
+    "pipeline_fee": "160845688",
+    "fee_mint": "CZBmorSG2sf69MwCE2fTnQCUrqpWKPP6cWQWwgSE1iRe",
+    "integrator": null,
+    "integrator_fee": "0",
+    "quote_mint": "AsFVjoTckjT6uHixGsB88hwWpGnMXYLjVcCJQkxSyoMu",
+    "base_mint": "CZBmorSG2sf69MwCE2fTnQCUrqpWKPP6cWQWwgSE1iRe",
+    "side": "sell"
+  },
+  "goal_market": "EjGJbLaX8JzWwhrpw1dBBHipfAUSDX5VLQZ1h1VkhzxG",
+  "goal_rounds": [
+    {
+      "buy": "5rYXckNgnVJtDdLXBDpZvSZBaJJJWoNi5jk35kqzUpLvbphMbbAs6EsDZsKrsUwhiG7UMA6W2NF1pfakw7uom3cE",
+      "sell": "4aptN9Prc2YFvf8g4U7aVf69Cg4EQtMu8gjPukmbcZy2sWPSPkhdSxpvYX4YghavddUra2ncvrx6VQEw5LriJfzh"
+    }
+  ],
+  "deadline_unlock": "24FjKqx2snBzBMFXznhNDfw3fs6VUjfhePXdiixiHD5LX3qU5ouU5ZoFi11aqJHT2ZDgduVVUZCUDYqLaKq24xyP",
+  "goal_unlock": "4RWgEcipufPtHEmBkYkn73YMuXTTYSARMEcgfQLBSXeVE5L68qFaQuXNAqkvWgyvYN4DYpe47LwSRZv2xRAzkSh7",
+  "goal_resumed": true,
+  "unlock_funding_transfer": "4M6AaoRJw1tjF14YRUiYEsCk358UTUXspNi5ALJ4tUihBK3SZzw6RwvQfpQehmSRBJnCs1bLi4ewQ6WSK6KD1qcR",
+  "trader_quote_transfer": "m9yXBN4Lsj8Wjt2qAu4nHX6hp7MbDNjGocTZvTWkaEv95VnsNZBWgq88oPXJfTwLpRZ4sER7xrFPxgvdkW9Rkpu"
+}

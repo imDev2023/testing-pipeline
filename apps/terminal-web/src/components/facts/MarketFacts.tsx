@@ -5,14 +5,14 @@
 // market", "Its strategy" and "Its mints", each worded as Pipeline's SDK words its trust flags. No
 // score and no verdict. "What Canary saw" is its first part, across the panel's width, from the
 // results the page read with it (#125).
-import { Fragment, useCallback } from "react";
+import { Fragment, useCallback, useEffect } from "react";
 import { MarketFacts as MarketFactsAnswer, type MintFacts } from "terminal-api/contract";
 import { getFromApi } from "@/api";
 import { BRAND } from "@/brand";
 import { formatDate, formatInteger, formatTokenAmount } from "@/format";
 import { ShortAddress, SubjectAddress } from "../Address";
 import { FlagFacts } from "../Flags";
-import { Panel } from "../Panel";
+import { PanelFrame, useLoad } from "../Panel";
 import { TokenAmount } from "../MarketsTable";
 import { MintLabel } from "../MintLabel";
 import { AuthorText } from "../Voice";
@@ -25,10 +25,19 @@ import type { CanaryRead } from "../canary/MarketCanary";
 const WRAPPED_SOL = "So11111111111111111111111111111111111111112";
 const plural = (n: number, one: string, many: string) => `${formatInteger(n)} ${n === 1 ? one : many}`;
 
+/** Dispatched on the window when something on the page changed what the facts say, such as a contained token's unlock clearing its hook (#76): the panel reads them again. */
+export const FACTS_STALE_EVENT = "aviary:facts-stale";
+
 export function MarketFacts({ market, canary }: { market: string; canary: CanaryRead }) {
   const load = useCallback((signal: AbortSignal) => getFromApi(`/v1/markets/${encodeURIComponent(market)}/facts`, MarketFactsAnswer, { signal }), [market]);
+  const { state, retry, refresh } = useLoad(load);
+  // Read again behind the facts shown, so they neither blank nor give way to a failed read.
+  useEffect(() => {
+    window.addEventListener(FACTS_STALE_EVENT, refresh);
+    return () => window.removeEventListener(FACTS_STALE_EVENT, refresh);
+  }, [refresh]);
   return (
-    <Panel title="Facts" what="this market's facts" load={load}>
+    <PanelFrame title="Facts" what="this market's facts" state={state} retry={retry}>
       {({ market: m, strategy, mints }) => {
         const quote = m.mints.find((x) => x.mint === m.quote_mint)!;
         return (
@@ -100,7 +109,7 @@ export function MarketFacts({ market, canary }: { market: string; canary: Canary
           </>
         );
       }}
-    </Panel>
+    </PanelFrame>
   );
 }
 

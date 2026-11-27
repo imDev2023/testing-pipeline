@@ -3301,6 +3301,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-23 in [Aviary: Canary in a Container, run by CanaryRun, with results in Postgres](https://github.com/imDev2023/testing-pipeline/issues/124)
 
+### CANARY-49: Sizes too small to sell back
+
+- Question: What does Canary trade when a share of the money vault is too small to sell back for anything?
+- Answer: A share of the vault under the dust floor, `DUST_FLOOR_HUNDREDTHS` (0.01 of a whole token, the small vault's smallest size), is raised to the floor, the reference size by the same rule, and a repeated size is dropped; the floor is never above the ladder's largest share (50,000 parts per million), so no size passes what that ladder would trade, and a mint without decimals has a floor of 1 unit, which every share meets. The ladder keeps its order and moves with the vault: a vault of 2,150,000 units of a 6-decimal mint trades 0.01, 0.0215 and 0.1075 tokens with 0.01 as the reference, and one a thousandth smaller or larger than 10 tokens trades nearly the same.
+- Alternatives: Replacing each such size by the whole-token size in its place (0.01, 0.1 or 1 token), which made the reference 1 token, 10% of a vault of 9.99 tokens and over its largest share, against 0.01 token at 10 tokens, so a small change in the vault moved the reference a hundredfold; lowering the small-vault threshold, which moves the same rounding to another vault size; counting a sale back that rounds to nothing as not run, which hides a strategy that pays nothing for small sales.
+- Specified in: [`docs/spec/pipescope-canary.md`, The money side and sizes](spec/pipescope-canary.md#the-money-side-and-sizes)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-27 in [Containment hook in Aviary: the containment panel and the Unlock button](https://github.com/imDev2023/testing-pipeline/issues/76)
+
 ## Explainer (EXPLAINER)
 
 ### EXPLAINER-01: What the explainer may say
@@ -4746,6 +4756,46 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Changes by: fixed on-chain once deployed
 - Status: default
 - Decided: 2026-11-23 in [Containment hook: hardening ticket](https://github.com/imDev2023/testing-pipeline/issues/74)
+
+### HOOK-53: Weak terms
+
+- Question: When does Aviary's containment panel warn that a contained token's goal or deadline is so small the containment means little (hardening finding H049)?
+- Answer: When the goal is under a tenth of the home market's quote reserve, real and virtual, which is about what forcing the unlock costs an outsider, or when the deadline is under a week after the binding; `CONTAINMENT.weakTerms` in `apps/terminal-api/src/config.ts`.
+- Alternatives: A fixed floor in SOL, which says nothing for a market quoted in another mint; a floor on chain, which H049's sign-off ruled out.
+- Specified in: [`docs/spec/containment-hook.md`, In Aviary](spec/containment-hook.md#in-aviary)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-27 in [Containment hook in Aviary: the containment panel and the Unlock button](https://github.com/imDev2023/testing-pipeline/issues/76)
+
+### HOOK-54: Which of the two unlocked a token
+
+- Question: How does Aviary know whether a token was unlocked by its goal or by its deadline, which the config does not record?
+- Answer: From the chain when it can tell (before the deadline only the goal could; past it with the goal still short now only the deadline could), and otherwise from the line the hook logs in the unlock's transaction, found among the unlock PDA's transactions whose block time is the config's `unlocked_at`, paging back past later transactions that name the PDA, which anyone may send.
+- Alternatives: Always reading the unlock's log, an RPC history read on every view of an unlocked token; recording the reason in the config, a change to the hook's account layout; reading only the PDA's newest transactions, which anyone could push the unlock out of by naming the PDA in their own.
+- Specified in: [`docs/spec/containment-hook.md`, In Aviary](spec/containment-hook.md#in-aviary)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-27 in [Containment hook in Aviary: the containment panel and the Unlock button](https://github.com/imDev2023/testing-pipeline/issues/76)
+
+### HOOK-55: The containment panel's read and the Unlock button's prepare
+
+- Question: How do the containment panel and its Unlock button read the chain and build `unlock`, since the hook has no strategy metadata?
+- Answer: Through two endpoints of Aviary's own, `GET /v1/markets/{market}/containment`, which recognises contained and unlocked tokens in the API at one slot for the panel and the trade box, and `POST /v1/containment/unlock/prepare`, which builds `unlock` from the config's accounts and simulates it for the sending wallet; the panel sits first on the home market's page, above the tax panel.
+- Alternatives: Decoding the mint and config in the page through the one-slot state read, which would put the recognition rule in the web and the trade box apart; registering the panel under the tax AMM's program, which would tie the hook's panel to the tax panel.
+- Specified in: [`docs/spec/containment-hook.md`, In Aviary](spec/containment-hook.md#in-aviary)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-27 in [Containment hook in Aviary: the containment panel and the Unlock button](https://github.com/imDev2023/testing-pipeline/issues/76)
+
+### HOOK-56: The facts' hook flags after an unlock
+
+- Question: How soon does the facts panel drop a contained token's `transfer-hook` and `transfer-hook-authority` flags after its unlock?
+- Answer: As soon as the containment panel has seen the unlock: its read refreshes the stored mint before answering when its flags still name the hook, and the panel then has the facts panel read again.
+- Alternatives: Waiting for the hourly read of every mint, which would show both flags for up to an hour after an unlock.
+- Specified in: [`docs/spec/containment-hook.md`, In Aviary](spec/containment-hook.md#in-aviary)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-27 in [Containment hook in Aviary: the containment panel and the Unlock button](https://github.com/imDev2023/testing-pipeline/issues/76)
 
 ## Buy wall AMM (POOL4)
 

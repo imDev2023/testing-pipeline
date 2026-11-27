@@ -16,8 +16,9 @@
 //
 // `pnpm --filter terminal-e2e swaps:devnet` adds real swaps through the trade box (E2E_SWAPS), and
 // `wallet:devnet` the wallet page's devnet demo (E2E_WALLET_DEVNET), `lending:devnet` the lending
-// AMM's devnet run (E2E_LENDING_DEVNET, #88), and `tax:devnet` the tax AMM's launch form and tax
-// panel on devnet (E2E_TAX_DEVNET, #75).
+// AMM's devnet run (E2E_LENDING_DEVNET, #88), `tax:devnet` the tax AMM's launch form and tax
+// panel on devnet (E2E_TAX_DEVNET, #75), and `containment:devnet` the containment panel and its Unlock
+// button on devnet (E2E_CONTAINMENT_DEVNET, #76).
 //
 // Every page test runs at 1440, 390 and 360 px wide in the light and the dark theme, and saves a
 // screenshot of each page to screenshots/<width>-<theme>/.
@@ -45,6 +46,9 @@ if (LENDING_DEVNET && RPC_MODE !== "devnet") throw new Error("E2E_LENDING_DEVNET
 // E2E_TAX_DEVNET adds the tax AMM's devnet demo (#75): a tax market launched, traded, paid out and changed from Aviary's pages.
 const TAX_DEVNET = Boolean(process.env.E2E_TAX_DEVNET);
 if (TAX_DEVNET && RPC_MODE !== "devnet") throw new Error("E2E_TAX_DEVNET sends real devnet transactions: run it with E2E_RPC=devnet.");
+// E2E_CONTAINMENT_DEVNET adds the containment hook's devnet demo (#76): two contained tokens traded and unlocked from Aviary's pages.
+const CONTAINMENT_DEVNET = Boolean(process.env.E2E_CONTAINMENT_DEVNET);
+if (CONTAINMENT_DEVNET && RPC_MODE !== "devnet") throw new Error("E2E_CONTAINMENT_DEVNET sends real devnet transactions: run it with E2E_RPC=devnet.");
 
 const WIDTHS = [
   { width: 1440, height: 900 },
@@ -87,6 +91,8 @@ const PROJECTS: Project<PlaywrightTestOptions>[] = [
   ...(LENDING_DEVNET ? [{ name: "lending-devnet", testMatch: /lending-devnet\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } }] : []),
   // The tax AMM launched, traded, paid out and changed through Aviary's pages on devnet (src/tax-devnet.spec.ts): only when asked for, never in CI.
   ...(TAX_DEVNET ? [{ name: "tax-devnet", testMatch: /tax-devnet\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } }] : []),
+  // Two contained tokens traded and unlocked, by the goal and by the deadline, through Aviary's pages on devnet (src/containment-devnet.spec.ts): only when asked for, never in CI.
+  ...(CONTAINMENT_DEVNET ? [{ name: "containment-devnet", testMatch: /containment-devnet\.spec\.ts/, use: { viewport: WIDTHS[0], colorScheme: "light" as const } }] : []),
 ];
 
 /** A project with a client address of its own, in the range set aside for tests (198.18.0.0/15). */

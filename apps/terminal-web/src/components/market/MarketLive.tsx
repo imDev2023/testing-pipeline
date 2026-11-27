@@ -21,6 +21,7 @@ import type { Loaded } from "../Panel";
 import table from "../ListingTable.module.css";
 import { CandleChart } from "./CandleChart";
 import { TradeBox } from "./TradeBox";
+import { useLiveContainment } from "@/products/containment/live";
 import { StrandedPanel, type CanaryRead } from "../canary/MarketCanary";
 import styles from "./Market.module.css";
 
@@ -33,6 +34,8 @@ type TradesState = { list: Trade[]; next: string | null };
 const NONE_HELD: Held = { trades: [], replaces: null };
 
 export function MarketLive({ market, canary }: { market: Market; canary: CanaryRead }) {
+  // The trade box's rule follows the containment panel's latest read (#76).
+  const containment = useLiveContainment()?.shown ?? null;
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
@@ -318,7 +321,7 @@ export function MarketLive({ market, canary }: { market: Market; canary: CanaryR
         // A stranded market has no trade box: its strategy's current version can give no quote and take no swap.
         <StrandedPanel market={market} canary={canary.value} />
       ) : market.mints.every((m) => m.decimals !== null) ? (
-        <TradeBox market={market} canary={canary} onTraded={traded} />
+        <TradeBox market={market} canary={canary} containment={containment} onTraded={traded} />
       ) : (
         <p className={`${styles.panel} ${styles.tradeArea}`}>This market&apos;s mints have not been read yet, so it cannot be quoted. Try again in a minute.</p>
       )}

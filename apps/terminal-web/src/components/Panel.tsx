@@ -8,15 +8,17 @@ export type Loaded<T> = { status: "loading" } | { status: "failed"; message: str
 
 /**
  * Loads once per mount and again on `retry`, keeping what a panel needs to say: still loading, what
- * failed, or the data. Several panels fed by one answer share one of these.
+ * failed, or the data; `refresh` loads again behind what is shown, which stays if that load fails.
+ * Several panels fed by one answer share one of these.
  */
-export function useLoad<T>(load: (signal: AbortSignal) => Promise<T>): { state: Loaded<T>; retry: () => void } {
+export function useLoad<T>(load: (signal: AbortSignal) => Promise<T>): { state: Loaded<T>; retry: () => void; refresh: () => void } {
   const [state, setState] = useState<Loaded<T>>({ status: "loading" });
-  const [attempt, setAttempt] = useState(0);
+  const [attempt, setAttempt] = useState({ n: 0, quiet: false });
   const retry = useCallback(() => {
     setState({ status: "loading" });
-    setAttempt((n) => n + 1);
+    setAttempt(({ n }) => ({ n: n + 1, quiet: false }));
   }, []);
+  const refresh = useCallback(() => setAttempt(({ n }) => ({ n: n + 1, quiet: true })), []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -24,13 +26,14 @@ export function useLoad<T>(load: (signal: AbortSignal) => Promise<T>): { state: 
       (data) => setState({ status: "loaded", data }),
       (e: unknown) => {
         if (controller.signal.aborted) return;
-        setState({ status: "failed", message: e instanceof ApiFailure ? e.message : "Something went wrong on this page." });
+        const failed = { status: "failed", message: e instanceof ApiFailure ? e.message : "Something went wrong on this page." } as const;
+        setState((now) => (attempt.quiet && now.status === "loaded" ? now : failed));
       },
     );
     return () => controller.abort();
   }, [load, attempt]);
 
-  return { state, retry };
+  return { state, retry, refresh };
 }
 
 /**

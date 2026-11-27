@@ -29,6 +29,7 @@ fn policy_values() -> Vec<(&'static str, Vec<u64>)> {
             "SMALL_VAULT_REFERENCE_HUNDREDTHS",
             vec![SMALL_VAULT_REFERENCE_HUNDREDTHS],
         ),
+        ("DUST_FLOOR_HUNDREDTHS", vec![DUST_FLOOR_HUNDREDTHS]),
         ("WAITS", waits),
         (
             "LAUNCH_CLOCK_SECONDS",
@@ -68,7 +69,7 @@ fn policy_values() -> Vec<(&'static str, Vec<u64>)> {
 
 /// The harness version and the fingerprint of the policy values it was released with.
 /// Change a value, and this test fails until HARNESS and the fingerprint change with it.
-const PINNED: (&str, &str) = ("canary/0.4.0", "5ef0605f143fe148");
+const PINNED: (&str, &str) = ("canary/0.5.0", "efca456c718052da");
 
 /// Values this small are everywhere in ordinary arithmetic and layouts (indices, decimal
 /// digits, byte offsets), so the grep cannot tell them from a policy value; the spec's values

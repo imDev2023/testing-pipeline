@@ -4,8 +4,9 @@
 use serde::Serialize;
 
 use crate::config::{
-    HUNDREDTHS, PPM, SMALL_VAULT_REFERENCE_HUNDREDTHS, SMALL_VAULT_SIZES_HUNDREDTHS,
-    SMALL_VAULT_UNITS, SOL_REFERENCE_SIZE, SOL_SIZES, VAULT_REFERENCE_PPM, VAULT_SIZES_PPM,
+    DUST_FLOOR_HUNDREDTHS, HUNDREDTHS, PPM, SMALL_VAULT_REFERENCE_HUNDREDTHS,
+    SMALL_VAULT_SIZES_HUNDREDTHS, SMALL_VAULT_UNITS, SOL_REFERENCE_SIZE, SOL_SIZES,
+    VAULT_REFERENCE_PPM, VAULT_SIZES_PPM,
 };
 
 /// What the money side needs to know about one mint of a market.
@@ -43,7 +44,8 @@ pub fn money_side(sides: &[Side]) -> usize {
 pub enum Basis {
     /// Fixed amounts of SOL.
     Sol,
-    /// Parts per million of the money vault.
+    /// Parts per million of the money vault, a size under the dust floor raised to it
+    /// (`CANARY-49`).
     ShareOfVault,
     /// Whole tokens, because the money vault is nearly empty.
     WholeTokens,
@@ -66,22 +68,23 @@ pub fn ladder(is_wrapped_sol: bool, vault: u64, decimals: u8) -> Ladder {
             reference: SOL_REFERENCE_SIZE,
         };
     }
-    let dedup = |mut sizes: Vec<u64>| {
+    // A mint may claim up to 255 decimals; past what fits, a size saturates.
+    let in_hundredths = |h: u64| {
+        10u128
+            .checked_pow(decimals as u32)
+            .and_then(|one| one.checked_mul(h as u128))
+            .map_or(u128::MAX, |units| units / HUNDREDTHS as u128)
+            .clamp(1, u64::MAX as u128) as u64
+    };
+    let sorted = |mut sizes: Vec<u64>| {
+        sizes.sort_unstable();
         sizes.dedup();
         sizes
     };
     if vault < SMALL_VAULT_UNITS {
-        // A mint may claim up to 255 decimals; past what fits, a size saturates.
-        let in_hundredths = |h: u64| {
-            10u128
-                .checked_pow(decimals as u32)
-                .and_then(|one| one.checked_mul(h as u128))
-                .map_or(u128::MAX, |units| units / HUNDREDTHS as u128)
-                .clamp(1, u64::MAX as u128) as u64
-        };
         return Ladder {
             basis: Basis::WholeTokens,
-            sizes: dedup(
+            sizes: sorted(
                 SMALL_VAULT_SIZES_HUNDREDTHS
                     .iter()
                     .map(|h| in_hundredths(*h))
@@ -90,11 +93,20 @@ pub fn ladder(is_wrapped_sol: bool, vault: u64, decimals: u8) -> Ladder {
             reference: in_hundredths(SMALL_VAULT_REFERENCE_HUNDREDTHS),
         };
     }
+    // A share of the vault under the dust floor is raised to it, the floor never above the ladder's
+    // largest share, so the ladder keeps its order and moves with the vault (`CANARY-49`).
     let of_vault = |ppm: u64| ((vault as u128 * ppm as u128) / PPM as u128).max(1) as u64;
+    let largest = VAULT_SIZES_PPM
+        .iter()
+        .map(|p| of_vault(*p))
+        .max()
+        .unwrap_or(1);
+    let floor = in_hundredths(DUST_FLOOR_HUNDREDTHS).min(largest);
+    let size = |ppm: u64| of_vault(ppm).max(floor);
     Ladder {
         basis: Basis::ShareOfVault,
-        sizes: dedup(VAULT_SIZES_PPM.iter().map(|p| of_vault(*p)).collect()),
-        reference: of_vault(VAULT_REFERENCE_PPM),
+        sizes: sorted(VAULT_SIZES_PPM.iter().map(|p| size(*p)).collect()),
+        reference: size(VAULT_REFERENCE_PPM),
     }
 }
 
