@@ -3301,6 +3301,16 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-23 in [Aviary: Canary in a Container, run by CanaryRun, with results in Postgres](https://github.com/imDev2023/testing-pipeline/issues/124)
 
+### CANARY-49: Sizes too small to sell back
+
+- Question: What does Canary trade when a share of the money vault is too small to sell back for anything?
+- Answer: A share of the vault under the dust floor, `DUST_FLOOR_HUNDREDTHS` (0.01 of a whole token, the small vault's smallest size), is replaced by the whole-token size in the same place of the small vault's ladder (0.01, 0.1 or 1 token in the first three places), the reference size by the same rule, and the sizes are then sorted with a repeated size dropped; a mint without decimals has a floor of 1 unit, which every share meets.
+- Alternatives: Raising each such size to the floor itself, which leaves fewer distinct sizes and a reference size of 0.01 token for a vault the whole-token ladder would trade 1 token in; lowering the small-vault threshold, which moves the same rounding to another vault size; counting a sale back that rounds to nothing as not run, which hides a strategy that pays nothing for small sales.
+- Specified in: [`docs/spec/pipescope-canary.md`, The money side and sizes](spec/pipescope-canary.md#the-money-side-and-sizes)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-27 in [Containment hook in Aviary: the containment panel and the Unlock button](https://github.com/imDev2023/testing-pipeline/issues/76)
+
 ## Explainer (EXPLAINER)
 
 ### EXPLAINER-01: What the explainer may say

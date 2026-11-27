@@ -16,7 +16,7 @@
 /// as known (`HOOK-47`), and the `outside_supply` check (`CANARY-47`). 0.3.0 since Pipeline
 /// 0.3, whose fee mints changed how `cost` values the sale's fee and how quotes compare with
 /// swaps.
-pub const HARNESS: &str = "canary/0.4.0";
+pub const HARNESS: &str = "canary/0.5.0";
 
 // ---------------------------------------------------------------------------------------
 // Units (not policy, but written only here so the policy grep has no false friends)
@@ -58,6 +58,15 @@ pub const SMALL_VAULT_UNITS: u64 = 2_000_000;
 pub const SMALL_VAULT_SIZES_HUNDREDTHS: [u64; 5] = [1, 10, 100, 1_000, 10_000];
 /// The reference size for a small money vault, in hundredths of a whole token: 1 token.
 pub const SMALL_VAULT_REFERENCE_HUNDREDTHS: u64 = 100;
+/// The dust floor (`CANARY-49`), in hundredths of a whole token: 0.01 token, the small vault's
+/// smallest size. A share-of-vault size under it is replaced by the small vault's size in the
+/// same place of its ladder, so no size is too small to sell back for anything.
+pub const DUST_FLOOR_HUNDREDTHS: u64 = SMALL_VAULT_SIZES_HUNDREDTHS[0];
+// The floor replaces sizes place by place, so the two ladders have the same places and the
+// same place for the reference size.
+const _: () = assert!(VAULT_SIZES_PPM.len() == SMALL_VAULT_SIZES_HUNDREDTHS.len());
+const _: () = assert!(VAULT_SIZES_PPM[2] == VAULT_REFERENCE_PPM);
+const _: () = assert!(SMALL_VAULT_SIZES_HUNDREDTHS[2] == SMALL_VAULT_REFERENCE_HUNDREDTHS);
 
 // ---------------------------------------------------------------------------------------
 // Clock positions (`CANARY-08`, `CANARY-09`)

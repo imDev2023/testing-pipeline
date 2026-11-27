@@ -970,6 +970,24 @@ The three-mint market's tests (`src/trade.spec.ts`, #122) review a swap in each 
 `pnpm --filter terminal-e2e tax:devnet` (`E2E_TAX_DEVNET`, never in CI, #75) launches a tax market of a fresh token from the tax AMM's launch form with the test trader's key, buys and sells it through the trade box, pays out each slot from the tax panel, sends `set_taxes`, `set_recipients` and `renounce_tax_authority` from the generic forms, and checks every figure the panel shows against the chain; it locks 0.5 devnet SOL in each market it launches, writes its signatures to `tests/terminal-e2e/test-results/tax-devnet.json`, and `E2E_TAX_MARKET=<market>` resumes on a market it launched before.
 Aviary's own address lookup table (`PIPESCOPE-167`), which a launch needs to fit one transaction, is made once per cluster by `node apps/terminal-api/scripts/lookup-table.ts [--url <rpc>]` with the project's devnet wallet, and named to the API by `AVIARY_LOOKUP_TABLE` (in `wrangler.jsonc` for devnet; with `--var AVIARY_LOOKUP_TABLE:<address>` for a local validator).
 
+### The containment hook in Aviary on devnet
+
+`pnpm --filter terminal-e2e containment:devnet` (`E2E_CONTAINMENT_DEVNET`, never in CI, #76) is the containment panel's devnet run, `tests/terminal-e2e/src/containment-devnet.spec.ts`: with the Playwright test wallet holding `e2e-trader.json`, it trades two contained tokens through their home market pages and unlocks each from the panel's Unlock button, one by its goal and one by its deadline.
+On each page it checks the panel's tax collected, goal and deadline against the chain, that no Unlock button shows before the unlock is due, that a buy shows the one-line rule first and a sell carries no integrator fee, and the mint's two hook flags in the facts; after each unlock, that the panel says when and by which, that both hook fields are unset on chain and that the facts carry neither flag, with screenshots at 1440 and 390 px in both themes.
+
+- The tokens come from the hook's launch script with `--unlock none`, so they stay contained for the run to unlock; a quote mint of our own keeps the goal within reach of a few round trips:
+
+  ```sh
+  (programs/containment-hook/scripts) node launch.ts --cluster devnet --launcher ~/.config/testing-pipeline/devnet/wallet.json \
+    --goal 1000000000 --deadline <unix time hours away> --unlock none \
+    --goal 1200000 --deadline <unix time minutes away> --unlock none \
+    --quote-mint new --record ../../../deployments/devnet-demo-containment-hook-aviary.json
+  ```
+
+- Give the test trader the quote mint from the launcher, then name the two mints: `E2E_CONTAINED_GOAL=<first mint> E2E_CONTAINED_DEADLINE=<second mint>`; `E2E_CONTAINED_TRADE` is each round trip's size in the quote mint (0.5 by default, the deadline token's a tenth of it).
+- `--grep 'goal token'` or `--grep 'deadline token'` runs one token; the goal token's test trades up to four round trips a run and starts from the tax its market has already collected, so a run stopped part way picks up where it was, and a run after its unlock checks the unlocked state.
+- Each signature goes to `tests/terminal-e2e/test-results/containment-devnet.json`; the run of 2026-11-27 is `deployments/devnet-demo-containment-aviary-run.json`.
+
 ### The lending AMM in Aviary on devnet
 
 `pnpm --filter terminal-e2e lending:devnet` (`E2E_LENDING_DEVNET`, never in CI) is the lending AMM panel's devnet run (#88): the Playwright test wallet holds `e2e-trader.json` and, through the local run's pages, creates a lending AMM market from the create form, adds, rebalances, removes in cash and in kind and locks; checks the panel's two largest sells against the strategy's own quote; turns the WSOL reserve's emergency mode on and off and has the test borrower borrow and repay with `scripts/kamino-devnet` (run `npm ci` there first); and creates a market of a token our containment hook binds with the project wallet.
