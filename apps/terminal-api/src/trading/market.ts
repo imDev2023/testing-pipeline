@@ -49,12 +49,19 @@ function extensions(data: Uint8Array): { type: number; at: number; length: numbe
   return found;
 }
 
-/** The program a Token-2022 mint's transfer hook calls, or null when it has no hook or no program set. */
-export function transferHookProgram(data: Uint8Array): Address | null {
+/** An address of 32 bytes, or null for all zeroes, which Token-2022 writes for none. */
+const optionalAddress = (bytes: Uint8Array): Address | null => (bytes.every((b) => b === 0) ? null : getAddressDecoder().decode(bytes));
+
+/** A Token-2022 mint's transfer hook extension, its authority and its program each null when unset; null when the mint has no such extension. */
+export function transferHookFields(data: Uint8Array): { authority: Address | null; program: Address | null } | null {
   const hook = extensions(data).find((e) => e.type === TRANSFER_HOOK && e.length >= 64);
   if (!hook) return null;
-  const program = data.subarray(hook.at + 32, hook.at + 64);
-  return program.every((b) => b === 0) ? null : getAddressDecoder().decode(program);
+  return { authority: optionalAddress(data.subarray(hook.at, hook.at + 32)), program: optionalAddress(data.subarray(hook.at + 32, hook.at + 64)) };
+}
+
+/** The program a Token-2022 mint's transfer hook calls, or null when it has no hook or no program set. */
+export function transferHookProgram(data: Uint8Array): Address | null {
+  return transferHookFields(data)?.program ?? null;
 }
 
 /** Why a mint is not plain, or null when it is. */

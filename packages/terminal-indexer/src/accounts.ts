@@ -167,6 +167,14 @@ export async function refreshMints(db: Db, rpcUrl: string): Promise<number> {
 }
 
 /**
+ * Reads the mints named again now, whenever they were last read: for a change Aviary knows of before
+ * the hourly read, such as a contained token's unlock clearing its transfer hook (#76).
+ */
+export async function rereadMints(db: Db, rpcUrl: string, mintAddresses: string[]): Promise<void> {
+  await readMints(db, rpcUrl, mintAddresses);
+}
+
+/**
  * Reads mints with their Metaplex metadata accounts in as few requests as it can, and keeps each
  * with Pipeline's trust flags, as its SDK's `decodeMint` gives them at the current epoch (which picks
  * a transfer fee in force), and with its token's own name; an account that is no mint is kept

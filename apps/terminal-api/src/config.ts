@@ -306,3 +306,15 @@ export const TRANSACTION_LIFETIME_SLOTS = 150;
  * market's events one page of its history holds.
  */
 export const LENDING_AMM = { create: { lpFeeBps: 30, lentIndex: 1 }, historyPage: 25 } as const;
+
+/**
+ * The containment hook in Aviary (#76; docs/spec/containment-hook.md, "In Aviary"): what the panel
+ * calls weak terms, a goal or a deadline so small the containment means little (hardening finding
+ * H049, which the hook leaves to Aviary rather than set a floor on chain). A goal under a tenth of
+ * the home market's quote reserve (real and virtual), the value containment guards, costs an outsider
+ * about that much tax to force the unlock; a deadline under a week after the binding frees the token
+ * within days whatever happens. Both are defaults the owner and MetalLegBob may change. And how many of
+ * an unlock PDA's newest transactions are searched for the unlock's log, when only its log can say
+ * whether the goal or the deadline unlocked a token: `bind` and `unlock` alone name the PDA.
+ */
+export const CONTAINMENT = { weakTerms: { goalOfQuoteReserveBps: 1_000, deadlineMinSeconds: 7 * 24 * 60 * 60 }, unlockHistory: 20 } as const;
