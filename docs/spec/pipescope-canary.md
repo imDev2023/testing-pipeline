@@ -264,7 +264,7 @@ Each check on each market produces one **Canary result**, a record the facts pan
 - A refused wallet-to-wallet transfer in `exit_transferred` is never "could not sell back": the buyer could still sell, so it raises no notice (`CANARY-27`).
 - Every exit record carries `could_not_sell_back` in its numbers, true exactly when this definition holds for it, so the trade box reads one field (`CANARY-38`); `exit_late` and `exit_launch_clock` carry it as false.
 - It counts whether the result is a fail or a warn, and the notice states the condition from the record: the size, the wait or the wallet's role, and the refusing program's own error message.
-  On devnet today that is the three open bonding curves: "a wallet that bought 1 SOL or more could not sell back; buys of 0.1 SOL and less sold back".
+  On devnet on 2026-11-23 that was the three open bonding curves: "a wallet that bought 1 SOL or more could not sell back; buys of 0.1 SOL and less sold back"; the curve's upgrade of 2026-11-25 left those markets unreadable by its new version (Canary's run of 2026-11-27).
 - `exit_late` and `exit_launch_clock` do not count: they describe another time, and the scheduled runs see that time when it comes.
 - A low round-trip return is not "could not sell back": the outside builder's 49% stays in the facts panel as a `cost` fail.
 - A stranded market cannot be bought either, so it has no trade box to put a notice in; its page says the current version cannot read it.

@@ -5,9 +5,9 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { postKeeperHeartbeat, seedKeeperRecords } from "./keeper";
 import { screenshot } from "./screenshot";
 import { CP_MARKET, REFUSING_MARKET, THREE_MINT_MARKET } from "./markets";
-import { CANARY_CURVE_STRATEGY, CANARY_MARKETS } from "./canary";
+import { CANARY_CURVE_STRATEGY, CANARY_MARKETS, CANARY_NOTICE } from "./canary";
 import { EXPLAINED_MARKET, EXPLAINED_STRATEGY, HOSTILE_TEXT } from "./explanation";
-import { OWN_ORIGINS } from "./target";
+import { API, OWN_ORIGINS } from "./target";
 import { connectTestWallet, installTestWallet } from "./wallet";
 
 const UNKNOWN_ADDRESS = "6efYq3Jt7k2bQxW9pLm4nR8sV1uZcA5dHgE2oTiwdnYp";
@@ -209,7 +209,8 @@ const walletReady = (then: "connected" | "unwrap") => async (page: Page) => {
   await expect(unwrap.getByRole("button", { name: "Sign in wallet" })).toBeEnabled();
 };
 
-const PAGES: { name: string; path: string; status: number; ready: (page: Page) => Promise<unknown>; wallet?: boolean }[] = [
+/** A page to open; `before` prepares it (a route of its own) before it is opened. */
+const PAGES: { name: string; path: string; status: number; ready: (page: Page) => Promise<unknown>; wallet?: boolean; before?: (page: Page) => Promise<unknown> }[] = [
   { name: "feed", path: "/", status: 200, ready: (page: Page) => expect(page.getByRole("region", { name: "Markets" }).getByRole("row").nth(1)).toBeVisible() },
   {
     name: "feed-filtered",
@@ -347,9 +348,12 @@ const PAGES: { name: string; path: string; status: number; ready: (page: Page) =
   // Canary on the pages (#125): the open bonding curve's notice and tick, the outside builder's cost
   // fail, a stranded market with no trade box, a market that refuses every trade, and a strategy's lines.
   {
+    // The curve's upgrade stranded the only markets whose buyer could not sell back, so the notice is
+    // drawn from the API's answer for the open curve before its upgrade, in place of the API's (src/canary.ts).
     name: "market-canary-notice",
-    path: `/markets/${CANARY_MARKETS.open_curve}`,
+    path: `/markets/${CANARY_NOTICE.market}`,
     status: 200,
+    before: (page: Page) => page.route(`${API}/v1/markets/${CANARY_NOTICE.market}/canary`, (route) => route.fulfill({ json: CANARY_NOTICE })),
     ready: async (page: Page) => {
       await marketReady("none")(page);
       await canaryReady(page);
@@ -486,12 +490,13 @@ test.beforeAll(async () => {
   await postKeeperHeartbeat();
 });
 
-for (const { name, path, status, ready, wallet } of PAGES) {
+for (const { name, path, status, ready, wallet, before } of PAGES) {
   test(`${name} wears the shell, stays inside the window and calls only Aviary's own origins`, async ({ page }, testInfo) => {
     const requested: string[] = [];
     page.on("request", (request) => requested.push(request.url()));
     // The Playwright test wallet, holding no key: it connects and reviews as recorded, and never signs.
     if (wallet) await installTestWallet(page, null);
+    await before?.(page);
 
     const response = await page.goto(path);
     expect(response?.status()).toBe(status);

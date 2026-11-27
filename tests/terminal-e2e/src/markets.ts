@@ -3,8 +3,11 @@
 /** Pipeline's example constant-product market of SOL and a plain token (docs/DEVNET.md in Pipeline's repo). */
 export const CP_MARKET = "3nWkYTqgJCcMV4S4DMrF77ZF27KA58nQSyZnNiPTZabe";
 export const CP_TOKEN = "6DsWfiJk2zcHAgYjsMZYULGrVgzeedtnKbdy76vReMyp";
-/** A curve market whose own rules refuse every trade: its strategy answers `WrongStatus`. */
-export const REFUSING_MARKET = "Bna6AxcMszMtNkdzpXWLSYBHp1g7pZnREt2QJfdBkyDY";
+/**
+ * A curve market whose own rules refuse every trade: its strategy answers `WrongStatus`. One made since
+ * the curve's upgrade of 2026-11-25, which left every older market of the curve unreadable (#75).
+ */
+export const REFUSING_MARKET = "jDUyvu6er9rHRSmt8YnTYUVqsZbzgRv3VLwXcnu9BZe";
 export const WSOL = "So11111111111111111111111111111111111111112";
 /**
  * A market of three mints (#122): a market of devnet's Counterflow strategy, which trades all six
