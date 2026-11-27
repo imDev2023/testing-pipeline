@@ -138,6 +138,9 @@ describe("keeperLine", () => {
   it("says what the runner last did about a slot it counts due, by the runner's own rule (PIPESCOPE-164)", () => {
     expect(keeperLine(slot(40n), keeper([unit({ at, outcome: "held", signature: null, error: null, cap: "MARKET_DAILY_CAP" })]), NOW)).toBe("The keeper runner: Held by MARKET_DAILY_CAP, 5m ago.");
     expect(keeperLine(slot(40n), keeper([unit({ at, outcome: "failed", signature: null, error: "blockhash expired", cap: null })]), NOW)).toMatch(/^The keeper runner: .+, 5m ago\.$/);
+    expect(keeperLine(slot(40n), keeper([{ ...unit({ at, outcome: "held", signature: null, error: null, cap: "MAX_DAILY_SPEND" }), due_since: new Date(NOW.getTime() - 3 * 3_600_000).toISOString() }]), NOW)).toBe(
+      "The keeper runner: Held by MAX_DAILY_SPEND, 5m ago. Due since 3h ago.",
+    );
     expect(keeperLine(slot(40n), keeper([unit(null)]), NOW)).toBe("The keeper runner counts it due and has not tried it yet.");
     expect(keeperLine(slot(40n), keeper([unit(null)], false), NOW)).toBe("The keeper runner counts it due; its records could not be read.");
   });

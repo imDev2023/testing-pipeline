@@ -100,7 +100,8 @@ export function taxPanelView({ state: data, slot, vaults }: { state: string | nu
 
 /**
  * What the keeper runner makes of a slot, from `GET /v1/markets/{market}/keeper` (PIPESCOPE-164): a slot
- * owed anything is due by the runner's own rule, with its last attempt at it; a slot owed nothing is not.
+ * owed anything is due by the runner's own rule, with its last attempt at it and, when the runner has
+ * tried and not landed it since its last payout, how long it has been due; a slot owed nothing is not.
  */
 export function keeperLine(slot: PayableSlot, keeper: KeeperRead, now?: Date): string {
   if (keeper.status === "loading") return "Reading the keeper runner's records…";
@@ -109,7 +110,8 @@ export function keeperLine(slot: PayableSlot, keeper: KeeperRead, now?: Date): s
   if (!due) return slot.owed > 0n ? "The keeper runner did not count it due when it was read." : "The keeper runner has nothing to pay: it is owed nothing.";
   if (!keeper.data.records.ok) return "The keeper runner counts it due; its records could not be read.";
   const last = due.last;
+  const since = due.due_since ? ` Due since ${formatAge(new Date(due.due_since), now)}.` : "";
   if (!last) return "The keeper runner counts it due and has not tried it yet.";
   const said = last.outcome === "held" || last.outcome === "parked" ? waitingReason(last) : outcomeText(last);
-  return `The keeper runner: ${said}, ${formatAge(new Date(last.at), now)}.`;
+  return `The keeper runner: ${said}, ${formatAge(new Date(last.at), now)}.${since}`;
 }

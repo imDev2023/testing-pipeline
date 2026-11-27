@@ -4208,7 +4208,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### TAX-62: What the tax panel shows
 
 - Question: What does the tax panel show, and from what?
-- Answer: From the one-slot read of the market state and its vaults: the rates in force at that slot with their ranges, a waiting change with its slot and the time left, the authority or that there is none or it renounced, the split with the suite share first, the tax collected and owed, a line and a payout button for each used recipient slot, the burn while it has a share or is owed, and the suite share, then the real reserves, the virtual reserve and what the vaults hold.
+- Answer: From the one-slot read of the market state and its vaults: the rates in force at that slot with their ranges, a waiting change with its slot and the time left, the authority or that there is none or it renounced, the split with the suite share first, the tax collected and owed, a line and a payout button for each used recipient slot, the burn while it has a share or is owed, and the suite share, each line with what the keeper runner makes of it from `GET /v1/markets/{market}/keeper` (PIPESCOPE-164), then the real reserves, the virtual reserve and what the vaults hold.
 - Alternatives: Reading the panel from Aviary's indexed events, which would lag the chain and could miss a payout made elsewhere.
 - Specified in: [`docs/spec/tax-amm.md`, In Aviary](spec/tax-amm.md#in-aviary)
 - Changes by: spec only
