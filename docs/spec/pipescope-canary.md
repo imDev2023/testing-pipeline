@@ -277,15 +277,16 @@ Each check on each market produces one **Canary result**, a record the facts pan
 - **The router's ProgramData changes**: every market, at once.
 - **A market is created or registered**: that market at once, and again 10 minutes, 1 hour and 1 day later, because launch-time rules are live then and fade.
   The later runs count from the market's creation, so a market the indexer finds after one of them has passed, as its first backfill finds every market, runs once at once and then at the times still ahead (`CANARY-48`).
-- **Every 6 hours**: every market (owner, 2026-11-10).
-  A change in a market's own state, or in a mint's authorities or extensions, shows within 6 hours; v1 has no separate watch on mints.
+- **Every 12 hours**, at midnight and noon UTC: every market (owner, 2026-11-28; every 6 hours from 2026-11-10).
+  A change in a market's own state, or in a mint's authorities or extensions, shows within 12 hours; v1 has no separate watch on mints.
+  Two sweeps a day keep Canary's container inside the Cloudflare account's included container memory beside the owner's other project, where four went about 2 GiB-hours a month over ([`pipescope-architecture.md`](pipescope-architecture.md), Canary runner, Cost; [#192](https://github.com/imDev2023/testing-pipeline/issues/192)).
 - This section is the only place in the spec that states the schedule (`CANARY-22`, `CANARY-23`); in code its delays and the sweep's interval live in `terminal-api`'s config module ([`pipescope-architecture.md`](pipescope-architecture.md#one-place-for-every-value)), the code that starts runs, not in `crates/canary`.
 - The triggers come from the indexer's ProgramData watch and its market events, as [Where Pipescope's indexer gets its data](https://github.com/imDev2023/testing-pipeline/issues/6) decided; no router event marks a new strategy version.
 - Each trigger starts or wakes the `CanaryRun` Durable Object of the strategy version concerned, which [`pipescope-architecture.md`](pipescope-architecture.md) keys by program id and ProgramData slot; that file left the triggers beyond a new version to this one.
 - A sweep of all 61 devnet markets took 2 minutes 27 seconds on the owner's Mac, about 45 seconds of it CPU, and 442 RPC requests (about 7 a market), before the token-authority runs were added; with them the request count was the same.
-- Against the architecture's budget, four sweeps a day are about 32 Canary runs a day (one per strategy version, about 960 a month where it assumed 500) and about 53,000 RPC requests a month (where it assumed about 5,000 credits for Canary snapshots).
+- Against the architecture's budget, the four sweeps a day first chosen were about 32 Canary runs a day (one per strategy version, about 960 a month where it assumed 500) and about 53,000 RPC requests a month (where it assumed about 5,000 credits for Canary snapshots).
   The requests are about a twentieth of Helius's free million credits.
-  If each sweep keeps the one container awake for about ten minutes, four sweeps a day are about 20 GiB-hours a month, close to the 18.5 the architecture budgeted and, like them, at worst a few cents over the allowance shared with the owner's other project.
+  If each sweep keeps the one container awake for about ten minutes, four sweeps a day are about 20 GiB-hours a month and two about 10; with the owner's other project's 7.2 GiB-hours in November, only two stay inside the 25 included.
   The build should measure a sweep on the `basic` instance, a quarter of a vCPU, before trusting that figure.
 
 ## One place for every value

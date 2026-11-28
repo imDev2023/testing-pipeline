@@ -2094,11 +2094,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### PIPESCOPE-96: How a terminal ticket is verified
 
 - Question: What does a terminal build ticket have to show before it counts as done?
-- Answer: Its criteria run on Aviary's local run against devnet data (both Workers in `wrangler dev` on the Docker Postgres, `PIPESCOPE-98`) until the hosted deploy of [#192](https://github.com/imDev2023/testing-pipeline/issues/192) lands and on Aviary's devnet deployment after it, every page it touches is checked at 1440, 390 and 360 px wide in the light and the dark theme with Playwright screenshots in the PR, and CI runs the same tests on recorded devnet fixtures with no network.
-- Alternatives: The earlier default, its criteria run on Aviary's devnet deployment from the first ticket; local runs only, for good; CI against live devnet, which would spend Aviary's RPC credits and fail when devnet does.
+- Answer: Its criteria run on Aviary's local run against devnet data (both Workers in `wrangler dev` on the Docker Postgres), and once its PR has merged the session deploys `main` with `pnpm terminal:deploy` and checks every page on the hosted deployment, `terminal-web-devnet` and `terminal-api-devnet` on `workers.dev`, with `pnpm --filter terminal-e2e deployed`; every page it touches is checked at 1440, 390 and 360 px wide in the light and the dark theme with Playwright screenshots in the PR, and CI runs the same tests on recorded devnet fixtures with no network.
+- Alternatives: The earlier default, its criteria run on the local run until the hosted deploy landed and on the deployment after it, without naming the deployment or how it is checked; the first default, its criteria run on Aviary's devnet deployment from the first ticket; local runs only, for good; CI against live devnet, which would spend Aviary's RPC credits and fail when devnet does.
 - Specified in: [`docs/spec/pipescope-architecture.md`, Build tickets](spec/pipescope-architecture.md#build-tickets)
 - Changes by: spec only
-- Status: changed 2026-11-22
+- Status: changed 2026-11-28
 - Decided: 2026-11-12 in [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipeline/issues/22)
 
 ### PIPESCOPE-97: Where the keeper page lives
@@ -2114,11 +2114,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### PIPESCOPE-98: Where Aviary runs for now
 
 - Question: Where does Aviary run and get verified before its hosted deploy?
-- Answer: Locally: `wrangler dev` runs both Workers against the Docker Postgres and devnet from the project's `.env`, with `RPC_URL` on the owner's shared Helius devnet key until Aviary has its own, and the hosted deploy (both Workers on `workers.dev`, Neon through Hyperdrive, Aviary's own Helius key, the secrets check and the root deploy script) moves to [#192](https://github.com/imDev2023/testing-pipeline/issues/192), after the owner's setup in [#110](https://github.com/imDev2023/testing-pipeline/issues/110).
-- Alternatives: Deploying both Workers to `workers.dev` from the scaffold on; Convex as the data layer, not taken because the spec's data layer is Postgres throughout.
+- Answer: Hosted again since [Aviary: the hosted devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/192) (owner, 2026-11-28): `terminal-api-devnet` and `terminal-web-devnet` on `workers.dev`, Neon through Hyperdrive and `RPC_URL` on Aviary's own Helius key, deployed together by `pnpm terminal:deploy`; the local run (`wrangler dev` against the Docker Postgres and devnet) stays where tickets build and CI tests.
+- Alternatives: The earlier default, Aviary run locally only, with the hosted deploy deferred to #192; deploying both Workers to `workers.dev` from the scaffold on; Convex as the data layer, not taken because the spec's data layer is Postgres throughout.
 - Specified in: [`docs/spec/pipescope-architecture.md`, Environments](spec/pipescope-architecture.md#environments)
 - Changes by: spec only
-- Status: default
+- Status: changed 2026-11-28
 - Decided: 2026-11-22 in [Aviary: scaffold both Workers, the database, the page shell with its themes, and the devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/113)
 
 ### PIPESCOPE-99: How the cron decides what is due
@@ -2820,6 +2820,36 @@ Each field is one line, and each value is one sentence of inline Markdown.
 - Status: default
 - Decided: 2026-11-24 in [Tax AMM in Aviary: the launch form and the tax panel](https://github.com/imDev2023/testing-pipeline/issues/75)
 
+### PIPESCOPE-169: The live socket's daily cap
+
+- Question: How long may the indexer's live socket be open in a day, whoever watches?
+- Answer: At most 4 hours in a UTC day (`SOCKET_HOURS_PER_DAY` in `terminal-api`'s config module), counted across every opening and kept in the indexer's storage; past them the socket stays closed until the next day, when its alarm opens it again for the viewers still there, and the pages meanwhile update from the every-minute reconciliation.
+- Alternatives: No cap, which lets a public page left open for hours push the account's Durable Object duration, shared with Top-pad's always-awake indexer, past its 400,000 GB-s, whose overage is rounded up to a whole million (about $12.50).
+- Specified in: [`docs/spec/pipescope-architecture.md`, Indexer](spec/pipescope-architecture.md#indexer)
+- Changes by: build-time constant
+- Status: default
+- Decided: 2026-11-28 in [Aviary: the hosted devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/192)
+
+### PIPESCOPE-170: Which connection string is Neon's
+
+- Question: Which of the project `.env`'s connection strings does the hosted deployment's database come from?
+- Answer: `NEON_DATABASE_URL`, the Neon project `terminal-devnet`'s direct connection string, from which the Hyperdrive `terminal-devnet` was made with its query cache off and to which `pnpm terminal:deploy` applies the migrations; `DATABASE_URL` stays the local run's Docker Postgres.
+- Alternatives: Putting Neon's string in `DATABASE_URL`, as the architecture's owner tasks first said, which would point every local run, test and the keeper's records at the hosted database.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Environments](spec/pipescope-architecture.md#environments)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-28 in [Aviary: the hosted devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/192)
+
+### PIPESCOPE-171: How Aviary is deployed
+
+- Question: How are Aviary's two devnet Workers deployed?
+- Answer: Together by `pnpm terminal:deploy` (`apps/terminal-api/scripts/deploy.ts`), from a clean checkout so the deployment is a commit, on the account's own `wrangler login`: it refuses unless the API's secrets are `RPC_URL` and nothing that may be a wallet or LLM key, migrates Neon, deploys `terminal-api-devnet` tagged with the commit, builds `terminal-web-devnet` with the URL wrangler gave the API and checks it for the test wallet, deploys it, and waits for `/health` to answer from that commit with Neon and the RPC reachable.
+- Alternatives: A deploy script per Worker with the API's URL written into the web's build, as Top-pad has, which ties the build to one Cloudflare account's `workers.dev` subdomain.
+- Specified in: [`docs/spec/pipescope-architecture.md`, Environments](spec/pipescope-architecture.md#environments)
+- Changes by: spec only
+- Status: default
+- Decided: 2026-11-28 in [Aviary: the hosted devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/192)
+
 ## Canary checks (CANARY)
 
 ### CANARY-01: What Canary claims
@@ -3045,11 +3075,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### CANARY-23: Scheduled sweep
 
 - Question: How often is every market re-checked on a schedule?
-- Answer: Every 6 hours.
-- Alternatives: Every hour; once a day.
+- Answer: Every 12 hours, at midnight and noon UTC (owner, 2026-11-28), so Canary's container stays inside the Cloudflare account's included container memory beside Top-pad's vision service; a new market, a new strategy version and a router upgrade are still run at once.
+- Alternatives: The earlier default, every 6 hours, about 2 GiB-hours a month over the included 25 with Top-pad's vision at November's pace; every hour; once a day.
 - Specified in: [`docs/spec/pipescope-canary.md`, When Canary runs](spec/pipescope-canary.md#when-canary-runs)
 - Changes by: runtime setting
-- Status: default
+- Status: changed 2026-11-28
 - Decided: 2026-11-10 in [Canary checks on the four devnet strategies](https://github.com/imDev2023/testing-pipeline/issues/14)
 
 ### CANARY-24: Where Canary runs
@@ -3536,11 +3566,11 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### EXPLAINER-23: How keys are made and leave the queue
 
 - Question: What makes an explanation's key, and what happens to a pending key a newer one replaces?
-- Answer: `terminal-api`'s `explainerKeys` job works out each strategy's current key every 5 minutes (its author part also holds the metadata status and whether it has a seeding section) and records a new one pending with its evidence, waiting while a changed metadata link is not fetched yet; only the strategy's current key stays pending, so a newer key supersedes an older one and a key that becomes current again returns to the queue.
-- Alternatives: Making keys at once from the indexer, Canary's runs and the metadata fetcher; keeping every pending key in the queue for the owner to skip.
+- Answer: `terminal-api`'s `explainerKeys` job, every 5 minutes, works out each strategy's current key (its author part also holds the metadata status and whether it has a seeding section) only when Postgres may hold something that changes one, on the indexer's first run, after any job of the indexer used the database or after Canary recorded results, and otherwise opens no database so Neon's free compute can suspend; it records a new key pending with its evidence, waiting while a changed metadata link is not fetched yet, and only the strategy's current key stays pending, so a newer key supersedes an older one and a key that becomes current again returns to the queue.
+- Alternatives: The earlier default, every 5 minutes whatever had happened, which kept Neon awake all month (about 180 of its free 100 compute-hours); making keys at once from the indexer, Canary's runs and the metadata fetcher; keeping every pending key in the queue for the owner to skip.
 - Specified in: [`docs/spec/pipescope-explainer.md`, When an explanation is made](spec/pipescope-explainer.md#when-an-explanation-is-made)
 - Changes by: build-time constant
-- Status: default
+- Status: changed 2026-11-28
 - Decided: 2026-11-24 in [Aviary: explainer jobs: the evidence, the validator, the approval queue and the approve command](https://github.com/imDev2023/testing-pipeline/issues/126)
 
 ### EXPLAINER-24: What of the author text is evidence and what code checks
