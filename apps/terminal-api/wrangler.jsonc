@@ -1,8 +1,8 @@
 // Adapted from Top-pad b833a7b, apps/api/wrangler.jsonc; owned here since.
-// `terminal-api` (docs/spec/pipescope-architecture.md, "The two Workers"). This file is the local
+// `terminal-api` (docs/spec/pipescope-architecture.md, "The two Workers"). The top level is the local
 // run: `pnpm --filter terminal-api dev` runs it in `wrangler dev` against devnet and the Docker
-// Postgres, from the project's .env. The devnet deployment (an `env.devnet` with Hyperdrive in
-// front of Neon, the KV namespace's id and the secrets) is added by #192.
+// Postgres, from the project's .env. `env.devnet` is the hosted deployment, `terminal-api-devnet`
+// on workers.dev, deployed with the web Worker by `pnpm terminal:deploy` (#192).
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "terminal-api",
@@ -45,7 +45,7 @@
   // RPC_URL is the one secret here (PIPESCOPE-37): the Helius devnet URL, which carries the key.
   // `wrangler dev` reads it from the environment, which direnv fills from the project's .env.
   "secrets": { "required": ["RPC_URL"] },
-  // Postgres. Deployed, Hyperdrive in front of Neon with its query cache off (#192). Locally,
+  // Postgres. Deployed, Hyperdrive in front of Neon with its query cache off (env.devnet). Locally,
   // `wrangler dev` connects straight to the database that DATABASE_URL names, passed in by
   // scripts/dev.ts as CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE.
   "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "00000000000000000000000000000000" }],
@@ -85,5 +85,60 @@
     { "name": "READS", "namespace_id": "1001", "simple": { "limit": 300, "period": 60 } },
     { "name": "TRADES", "namespace_id": "1002", "simple": { "limit": 60, "period": 60 } },
     { "name": "REPORTS", "namespace_id": "1003", "simple": { "limit": 10, "period": 60 } }
-  ]
+  ],
+  // The hosted devnet deployment (#192). Wrangler carries no binding or var into an environment, so
+  // each is named again here with the top level's value, which test/wrangler-devnet.test.ts keeps
+  // equal, so every value still has its one place above; only the name and the ids of the resources
+  // made for it are its own. Its one secret, RPC_URL, is Aviary's own Helius devnet key, set with
+  // `wrangler secret put RPC_URL --env devnet` (docs/toolchain.md, "Aviary's hosted devnet deployment").
+  "env": {
+    "devnet": {
+      "name": "terminal-api-devnet",
+      "workers_dev": true,
+      "triggers": { "crons": ["* * * * *"] },
+      "version_metadata": { "binding": "CF_VERSION_METADATA" },
+      "vars": {
+        "CLUSTER": "devnet",
+        "AVIARY_LOOKUP_TABLE": "3s6YeCtZRoQ3i9MBTRUE5dQn6uvC7AK6qFr8B6oWZsyz",
+        "KEEPER_WALLET": "8qTRTAXmbpVCFmKRNH5nkF2XGb1HpSDhjeqkyaqMvQC2",
+        "CANARY_OPERATOR": "9rYtQM57An5FRiVMkE5aZVRMtq5i1uwN3iiAEjRoywCt",
+        "INTEGRATOR_FEE": {
+          "bps": 50,
+          "wallet": "9QyvxvMQQcDhRJG8qbrSL7KaXtfoMnfX37ny6XFRL3Eg",
+          "accounts": {
+            "So11111111111111111111111111111111111111112": "2aCTxPmrJvo9b99kfnR2yk7k647oFb1m5nMWkWmAvThn",
+            "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU": "6DEijYZbuMg7nQSvYD6KzFuB6jytvCGGmSbtarErySwC"
+          }
+        }
+      },
+      "secrets": { "required": ["RPC_URL"] },
+      // `terminal-devnet`, in front of the Neon project `terminal-devnet` (its direct endpoint, the
+      // project .env's NEON_DATABASE_URL), with its query cache off; made 2026-11-28.
+      "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "6a5422287db449f886ce36a43fb005bd" }],
+      "durable_objects": {
+        "bindings": [
+          { "name": "INDEXER", "class_name": "Indexer" },
+          { "name": "LIVE_ROOMS", "class_name": "LiveRoom" },
+          { "name": "CANARY_RUNS", "class_name": "CanaryRun" },
+          { "name": "CANARY_CONTAINER", "class_name": "CanaryContainer" }
+        ]
+      },
+      "containers": [
+        {
+          "class_name": "CanaryContainer",
+          "image": "../../crates/canary/Dockerfile",
+          "image_build_context": "../../crates",
+          "instance_type": "basic",
+          "max_instances": 1
+        }
+      ],
+      // `terminal-cache-devnet`, made 2026-11-28.
+      "kv_namespaces": [{ "binding": "TERMINAL_CACHE", "id": "df462760fedf48a0bf4bb5231bf188d8" }],
+      "ratelimits": [
+        { "name": "READS", "namespace_id": "1001", "simple": { "limit": 300, "period": 60 } },
+        { "name": "TRADES", "namespace_id": "1002", "simple": { "limit": 60, "period": 60 } },
+        { "name": "REPORTS", "namespace_id": "1003", "simple": { "limit": 10, "period": 60 } }
+      ]
+    }
+  }
 }

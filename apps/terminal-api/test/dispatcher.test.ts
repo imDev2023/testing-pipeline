@@ -19,6 +19,13 @@ describe("the every-minute dispatcher (PIPESCOPE-89)", () => {
     expect(dueJobs(at("2026-11-22T11:00:00Z"))).not.toContain("pruneCandles");
   });
 
+  it("makes Canary's sweep due every 12 hours, at midnight and noon UTC (CANARY-23)", () => {
+    expect(dueJobs(at("2026-11-22T00:00:00Z"))).toContain("canarySweep");
+    expect(dueJobs(at("2026-11-22T12:00:00Z"))).toContain("canarySweep");
+    expect(dueJobs(at("2026-11-22T06:00:00Z"))).not.toContain("canarySweep");
+    expect(dueJobs(at("2026-11-22T18:00:00Z"))).not.toContain("canarySweep");
+  });
+
   it("makes every hourly job due at the top of the hour", () => {
     expect(dueJobs(at("2026-11-22T11:00:00Z"))).toEqual([
       "reconcileRouter",

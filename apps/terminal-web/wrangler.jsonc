@@ -2,7 +2,8 @@
 // `terminal-web` (docs/spec/pipescope-architecture.md, "terminal-web"): the web app on Workers
 // through OpenNext. `pnpm --filter terminal-web preview` builds it and runs it in `wrangler dev`
 // against the local run's API. It is built per environment, since NEXT_PUBLIC_API_URL is baked in
-// at build time; the devnet deployment (`env.devnet`) is added by #192.
+// at build time: `pnpm terminal:deploy` builds it with the URL `terminal-api-devnet` was deployed
+// at, and deploys it as `env.devnet` (#192).
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "terminal-web",
@@ -10,5 +11,14 @@
   "compatibility_date": "2026-11-20",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "assets": { "directory": ".open-next/assets", "binding": "ASSETS" },
-  "observability": { "enabled": true }
+  "observability": { "enabled": true },
+  // The hosted devnet deployment, `terminal-web-devnet` on workers.dev (#192); assets are named
+  // again, since wrangler carries no binding into an environment.
+  "env": {
+    "devnet": {
+      "name": "terminal-web-devnet",
+      "workers_dev": true,
+      "assets": { "directory": ".open-next/assets", "binding": "ASSETS" }
+    }
+  }
 }

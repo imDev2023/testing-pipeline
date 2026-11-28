@@ -35,8 +35,8 @@ Decisions: [ADR 0003](../adr/0003-pipescope-indexes-pipeline-itself.md) (our own
 
 | Allowance (Workers Paid, per account per month) | Top-pad's devnet build | Aviary | Overage |
 | --- | --- | --- | --- |
-| Durable Object duration, 400,000 GB-s | Its always-awake indexer, about 10,300 GB-s a day measured 2026-11-06 to 2026-11-09, so about 310,000 | Its indexer only while someone watches (see Indexer), Canary runs about 8,300, live rooms hibernate | None expected; an always-awake second indexer would have added about 324,000 and gone over (about $3, or $12.50 if the overage rounds up to a whole million GB-s) |
-| Container memory, 25 GiB-hours | Vision, up to about 50 minutes a day | Canary, about 20 GiB-hours for four sweeps a day (`pipescope-canary.md`), plus re-runs of new markets | At worst a few GiB-hours over, cents |
+| Durable Object duration, 400,000 GB-s | Its always-awake indexer, about 10,300 GB-s a day measured 2026-11-06 to 2026-11-09, so about 310,000 (262,700 from 2026-11-01 to 2026-11-28) | Its indexer's socket only while someone watches and at most 4 hours a day (see Indexer, `PIPESCOPE-169`), Canary runs about 8,300, live rooms hibernate | None expected; an always-awake second indexer would have added about 324,000 and gone over (about $3, or $12.50 if the overage rounds up to a whole million GB-s) |
+| Container memory, 25 GiB-hours | Vision, up to about 50 minutes a day (7.2 GiB-hours from 2026-11-01 to 2026-11-28) | Canary, about 10 GiB-hours for two sweeps a day (`CANARY-23`), plus re-runs of new markets | None: about 17 of 25 with both |
 | Container vCPU, 375 minutes; disk, 200 GB-hours | Small | About 90 vCPU-minutes and under 100 GB-hours | None |
 | Workers requests, 10 million; CPU, 30 million ms | Small | Small at devnet volume | None |
 
@@ -108,6 +108,7 @@ The design is the recommendation of [Where Pipescope's indexer gets its data](ht
   Watching the strategy programs is what shows custom actions, bypass swaps and upgrades, none of which the router reports.
 - **Live source, only while someone watches**: one standard `logsSubscribe` socket on Helius devnet, holding a subscription per watched program, open only while at least one browser is connected to a live room, and closed a few minutes after the last one leaves.
   An outbound socket cannot hibernate and keeps the object billed, so an always-open socket would push the account past its Durable Object allowance (see Platform and plans).
+  It is held at most 4 hours in a UTC day, counted across every opening, whoever watches (`SOCKET_HOURS_PER_DAY`, `PIPESCOPE-169`): past them it stays closed until the next day, when the alarm opens it again for the viewers still there, and the pages update from the every-minute reconciliation meanwhile, so Aviary alone can never push the account past its Durable Object allowance, whose overage is billed by the whole million GB-s.
   While the socket is open, a 15 s alarm reopens it if it drops; when it opens, a reconciliation runs at once, so nothing between the last cron run and the socket is missed.
   A try that ends before the RPC confirms the subscription (refused, as an RPC without `logsSubscribe` answers, or not opened at all) makes the next wait twice the last, from 15 s up to 5 minutes (`SOCKET_REOPEN_BACKOFF_MAX_MS`), and a viewer arriving meanwhile does not try ahead of it; a socket that drops once no room has a viewer is not reopened for no one, and the next viewer opens it (`PIPESCOPE-137`).
 - **Every reported transaction** is fetched whole (`getTransaction`), because swap events are inner instructions, not log lines, and decoded with Pipeline's TypeScript SDK (`extractEventsFromInnerInstructions`); its position in the block comes from `getBlock`, or from `transactionIndex` when `getTransactionsForAddress` served it.
@@ -286,8 +287,8 @@ What the checks are, how a run copies a market and when runs happen are in [`pip
 - **Licence seam**: `simulate_swap` executes the router program, which is BSL 1.1 with no Additional Use Grant until 2028-11-08; every trade in Canary's checks goes through one swap function with two implementations, through the router (used on devnet) and calling the strategy directly plus Pipeline's Apache-2.0 settlement code, so Canary can switch without a rewrite unless MetalLegBob grants production use.
   The conformance report is the exception, since `pipeline-check` itself runs the router; without the router it is "not run".
   The question was not put to him as of 2026-11-10.
-- **Cost**: four sweeps a day are about 960 runs a month and about 53,000 RPC requests; if each sweep keeps the container awake about ten minutes, that is about 20 GiB-hours of the 25 included, and re-runs of new markets add their 2-minute sleeps (`pipescope-canary.md`, When Canary runs).
-  With Top-pad's vision service (about 10 GiB-hours a month at its pace since 2026-11-01), the account may go a few GiB-hours over, a few cents a month.
+- **Cost**: two sweeps a day (`CANARY-23`, every 12 hours since 2026-11-28) keep the container awake about ten minutes each, about 10 GiB-hours a month of the 25 included, and re-runs of new markets add their 2-minute sleeps (`pipescope-canary.md`, When Canary runs).
+  Top-pad's vision service used 7.2 GiB-hours from 2026-11-01 to 2026-11-28, so the two stay inside the allowance; four sweeps a day would have gone about 2 GiB-hours over, which the owner chose not to pay.
 - **Fallback**: a small server elsewhere (Fly.io from $2.19 a month) runs the same binary if Containers misbehave; it is not built unless needed.
 
 ## Verified builds
@@ -339,6 +340,7 @@ Each is a named constant; the pages and the Telegram bot read what they show fro
 | Registry snapshot, ProgramData watch | every 10 minutes, every minute | `PIPESCOPE-28` |
 | Socket: reopen alarm, close after the last viewer | 15 s, 3 minutes | `PIPESCOPE-27`, `PIPESCOPE-28` |
 | Socket: longest wait between failed tries | 5 minutes | `PIPESCOPE-137` |
+| Socket: most hours open in a UTC day | 4 | `PIPESCOPE-169` |
 | Candle lengths and retention | as [Candles](#candles) | `PIPESCOPE-30` |
 | Candle pruning | once a day | `PIPESCOPE-109` |
 | Candle prices written to; candles a request is served, by default and at most | 36 significant digits; 1,000 and 5,000 | `PIPESCOPE-107` |
@@ -392,15 +394,16 @@ Each copied file starts with a header naming Top-pad commit `b833a7b` and its pa
 ## Environments
 
 - **Local**: `wrangler dev` for both Workers against devnet, with the Docker Postgres and `RPC_URL` from the project's `.env`; [`docs/toolchain.md`, "Aviary's local run"](../toolchain.md#aviarys-local-run) has the commands.
-  Aviary runs only here for now (owner, 2026-11-22; `PIPESCOPE-98`): `RPC_URL` is the owner's shared Helius devnet key until Aviary has its own, and `DATABASE_URL` names the Docker Postgres of `packages/terminal-db/docker-compose.yml`.
-- **Devnet**: `terminal-api-devnet` and `terminal-web-devnet` on `workers.dev`, deployed together by one root script; secrets set with `wrangler secret put --env devnet`.
-  This hosted deploy, with Neon through Hyperdrive, Aviary's own Helius key and the secrets check, is [Aviary: the hosted devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/192), after the owner's setup in [#110](https://github.com/imDev2023/testing-pipeline/issues/110).
+  Tickets build and verify here first, and CI runs the same tests on recorded fixtures; `DATABASE_URL` names the Docker Postgres of `packages/terminal-db/docker-compose.yml`, and `RPC_URL` Aviary's own Helius devnet key.
+- **Devnet**: Aviary runs hosted since [Aviary: the hosted devnet deploy](https://github.com/imDev2023/testing-pipeline/issues/192) (owner, 2026-11-28; `PIPESCOPE-98`): `terminal-api-devnet` at https://terminal-api-devnet.rc-labs.workers.dev and `terminal-web-devnet` at https://terminal-web-devnet.rc-labs.workers.dev, the `env.devnet` of each Worker's `wrangler.jsonc`, deployed together from `main` by `pnpm terminal:deploy` (`PIPESCOPE-171`); [`docs/toolchain.md`, "Aviary's hosted devnet deployment"](../toolchain.md#aviarys-hosted-devnet-deployment) has the commands.
+  Its database is the Neon project `terminal-devnet` (Postgres 17, `aws-eu-central-1`, database `terminal`) behind the Hyperdrive `terminal-devnet` with its query cache off, made from the project `.env`'s `NEON_DATABASE_URL`, its direct connection string (`PIPESCOPE-170`); its caches are the KV namespace `terminal-cache-devnet`; its one secret is `RPC_URL`, Aviary's own Helius devnet key, set by `pnpm terminal:deploy --set-rpc-url` through wrangler's stdin.
+  Neon's free plan suspends the database after 5 idle minutes, so nothing wakes it while devnet is quiet: reconciliation and the ProgramData watch ask the chain first, the explainer's keys wait for a write (`EXPLAINER-23`), and the hourly metadata and mint reads and Canary's two sweeps a day are the only scheduled wakes; devnet's router had transactions in 110 five-minute windows in the week to 2026-11-27, so the database is awake about 20 to 60 compute-hours a month of the free 100.
 - The custom domain is `aviary.trade`, from [Product and suite names](https://github.com/imDev2023/testing-pipeline/issues/17); it is attached to `terminal-web` once the owner has registered it, and the Workers' own names do not change with the public name.
 
 ## Owner tasks before the build
 
 1. Make Aviary's own free Helius key (a second free Helius project or account; whether one account can hold a second free project was not confirmed, since Helius's docs could not be fetched on 2026-11-09) and put its devnet URL in the project's `.env` as `RPC_URL`.
-2. Create the Neon project `terminal-devnet` on the free plan and put its connection string in the project's `.env` as `DATABASE_URL`.
+2. Create the Neon project `terminal-devnet` on the free plan and put its direct connection string in the project's `.env` as `NEON_DATABASE_URL`, beside the local run's `DATABASE_URL` (`PIPESCOPE-170`).
 3. Create a fine-grained GitHub token for this repo with Actions read and write only, for the verified-build workflow; the build session sets it as `GH_ACTIONS_TOKEN`.
 4. Approve the explainer's first paid run, as `pipescope-explainer.md` says.
 
@@ -412,7 +415,7 @@ Cut by [Cut Pipescope's build tickets](https://github.com/imDev2023/testing-pipe
 They replace the slices this section first suggested: each ticket is a vertical slice, from the database to the page it shows on, so each is demonstrable on devnet on its own.
 Every ticket works as [`docs/agents/build-tickets.md`](../agents/build-tickets.md) says, and in addition:
 
-- **Verified on devnet data** (`PIPESCOPE-96`): its criteria run on Aviary's local run against devnet ([Environments](#environments), `PIPESCOPE-98`), and on Aviary's devnet deployment once [#192](https://github.com/imDev2023/testing-pipeline/issues/192) has deployed it; every page it adds or changes is checked at 1440, 390 and 360 px wide in the light and the dark theme, with Playwright screenshots in its PR (`pnpm terminal:e2e`, which saves them); CI runs the same tests on recorded devnet fixtures with no network.
+- **Verified on devnet data** (`PIPESCOPE-96`): its criteria run on Aviary's local run against devnet ([Environments](#environments)), and once its PR has merged the session deploys `main` with `pnpm terminal:deploy` and checks every page on the hosted deployment, `terminal-web-devnet` and `terminal-api-devnet` on `workers.dev`, with `pnpm --filter terminal-e2e deployed`; every page it adds or changes is checked at 1440, 390 and 360 px wide in the light and the dark theme, with Playwright screenshots in its PR (`pnpm terminal:e2e` on the local run and `deployed` on the deployment save them); CI runs the same tests on recorded devnet fixtures with no network.
 - **Recorded fixtures** (`PIPESCOPE-102`): in CI the local API reads devnet's RPC answers from `tests/terminal-e2e/fixtures/devnet-rpc.json` through a fixture server the Playwright run starts; a ticket whose API asks devnet something new records it with `pnpm --filter terminal-e2e record` against live devnet, and a request with no recording fails its test.
 - **Signing in tests** (`PIPESCOPE-94`): Playwright registers a Wallet Standard test wallet, only in test builds, that signs with a devnet test key from `~/.config/testing-pipeline/devnet/`; each ticket that adds a signing flow also runs it once in a real wallet extension set to devnet, driven in the owner's Chrome.
 - **The keeper page** lives at `/keeper`, linked from every page's footer and from each product panel's due keeper jobs (`PIPESCOPE-97`).

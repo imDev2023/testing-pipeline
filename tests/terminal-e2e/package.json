@@ -10,6 +10,7 @@
         "typecheck": "tsc -p .",
         "e2e": "playwright test",
         "record": "E2E_RPC=record playwright test",
+        "deployed": "playwright test -c playwright.deployed.config.ts",
         "swaps:devnet": "E2E_SWAPS=1 E2E_RPC=devnet playwright test --project swaps",
         "wallet:devnet": "E2E_WALLET_DEVNET=1 E2E_RPC=devnet playwright test --project wallet-devnet",
         "tax:devnet": "E2E_TAX_DEVNET=1 E2E_RPC=devnet playwright test --project tax-devnet",

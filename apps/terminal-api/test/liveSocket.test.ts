@@ -3,7 +3,7 @@
 // reconciliation the moment it opens; reopened by its 15-second alarm if it drops; closed 3 minutes
 // after the last viewer leaves, which its storage and its log record.
 import { beforeEach, describe, expect, it } from "vitest";
-import { SOCKET_CLOSE_AFTER_LAST_VIEWER_MS, SOCKET_REOPEN_ALARM_MS, SOCKET_REOPEN_BACKOFF_MAX_MS } from "../src/config";
+import { SOCKET_CLOSE_AFTER_LAST_VIEWER_MS, SOCKET_HOURS_PER_DAY, SOCKET_REOPEN_ALARM_MS, SOCKET_REOPEN_BACKOFF_MAX_MS } from "../src/config";
 import { LiveSocket, type LiveSocketDeps, type LiveSocketState } from "../src/liveSocket";
 
 type FakeSocket = {
@@ -263,5 +263,79 @@ describe("the 15-second alarm", () => {
     await restarted.live.alarm();
     expect(restarted.open()).toHaveLength(1);
     expect(await restarted.live.status()).toMatchObject({ open: true, rooms: ["market:A"] });
+  });
+});
+
+// The socket's daily cap (PIPESCOPE-169): an open socket keeps the indexer's Durable Object billed,
+// so it is held at most SOCKET_HOURS_PER_DAY hours in a UTC day, whoever watches; past them the
+// pages update from the every-minute reconciliation until the next day.
+describe("the daily cap", () => {
+  const HOUR = 3_600_000;
+  const DAY = 24 * HOUR;
+  const CAP = SOCKET_HOURS_PER_DAY * HOUR;
+
+  /** Alarms fire, as the clock moves to each, until `until`. */
+  async function alarmsUntil(until: number) {
+    while (h.world.alarm !== null && h.world.alarm <= until) await alarm();
+  }
+
+  it("closes the socket once it has been open SOCKET_HOURS_PER_DAY hours in a day, with viewers still there, and says why", async () => {
+    await join("market:A");
+    h.open()[0]!.subscribed();
+    const opened = h.world.now;
+    await alarmsUntil(opened + CAP - 1);
+    expect(h.open()).toHaveLength(1);
+    await alarmsUntil(opened + CAP + SOCKET_REOPEN_ALARM_MS);
+    expect(h.open()).toHaveLength(0);
+    expect(await h.live.status()).toMatchObject({ open: false, rooms: ["market:A"], reason: `used its ${SOCKET_HOURS_PER_DAY} hours for the day` });
+    expect(h.world.log.at(-1)).toBe(`live socket closed: used its ${SOCKET_HOURS_PER_DAY} hours for the day`);
+  });
+
+  it("opens no socket for a viewer arriving once the day's hours are used, and opens it at the next UTC day for the viewers still there", async () => {
+    await join("market:A");
+    h.open()[0]!.subscribed();
+    await alarmsUntil(h.world.now + CAP + SOCKET_REOPEN_ALARM_MS);
+    await join("feed");
+    expect(h.world.sockets).toHaveLength(1);
+    expect(h.open()).toHaveLength(0);
+    const tomorrow = (Math.floor(h.world.now / DAY) + 1) * DAY;
+    expect(h.world.alarm).toBe(tomorrow);
+    await alarm();
+    expect(h.open()).toHaveLength(1);
+    expect(await h.live.status()).toMatchObject({ open: true, rooms: ["feed", "market:A"], reason: "reopened by the alarm" });
+  });
+
+  it("counts every opening of the day together, across a restart of the object", async () => {
+    await join("market:A");
+    h.open()[0]!.subscribed();
+    await alarmsUntil(h.world.now + CAP - HOUR);
+    await leave("market:A");
+    await alarmsUntil(h.world.now + SOCKET_CLOSE_AFTER_LAST_VIEWER_MS);
+    expect(h.open()).toHaveLength(0);
+    // Evicted while closed: a new instance reads the day's count from storage.
+    const restarted = harness(h.world.stored);
+    h = restarted;
+    h.world.now += 10 * 60_000;
+    await join("market:A");
+    h.open()[0]!.subscribed();
+    const reopened = h.world.now;
+    await alarmsUntil(reopened + HOUR - SOCKET_CLOSE_AFTER_LAST_VIEWER_MS - 2 * SOCKET_REOPEN_ALARM_MS);
+    expect(h.open()).toHaveLength(1);
+    await alarmsUntil(reopened + HOUR);
+    expect(h.open()).toHaveLength(0);
+    expect((await h.live.status()).openTodayMs).toBeGreaterThanOrEqual(CAP);
+  });
+
+  it("keeps the cap as the reason it closed when the viewers leave afterwards, with no second close in the log", async () => {
+    await join("market:A");
+    h.open()[0]!.subscribed();
+    await alarmsUntil(h.world.now + CAP + SOCKET_REOPEN_ALARM_MS);
+    const closed = await h.live.status();
+    const lines = h.world.log.length;
+    await leave("market:A");
+    await alarmsUntil(h.world.now + SOCKET_CLOSE_AFTER_LAST_VIEWER_MS);
+    expect(await h.live.status()).toMatchObject({ open: false, rooms: [], reason: closed.reason, changedAt: closed.changedAt });
+    expect(h.world.log.length).toBe(lines);
+    expect(h.world.alarm).toBeNull();
   });
 });

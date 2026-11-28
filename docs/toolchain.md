@@ -847,13 +847,15 @@ Two things to know:
 
 ## Aviary's local run
 
-Aviary runs locally for now (`PIPESCOPE-98`): both Workers in `wrangler dev` against the Docker Postgres and devnet, from the project's `.env`.
-Every terminal ticket verifies on this run until the hosted deploy of [#192](https://github.com/imDev2023/testing-pipeline/issues/192) lands (`docs/spec/pipescope-architecture.md`, Build tickets).
+Both Workers in `wrangler dev` against the Docker Postgres and devnet, from the project's `.env`, where every terminal ticket builds and verifies first; once its PR has merged, its pages are checked on the hosted deployment too ("Aviary's hosted devnet deployment" below; `docs/spec/pipescope-architecture.md`, Build tickets; `PIPESCOPE-96`).
 
-Node 24 (`source scripts/toolchain-env.sh`), Docker, and the project's `.env` in the main checkout, which direnv loads after `~/.config/env/global.env` (`.env.example` names its two values):
+Node 24 (`source scripts/toolchain-env.sh`), Docker, and the project's `.env` in the main checkout, which direnv loads after `~/.config/env/global.env` (`.env.example` names its values):
 
-- `RPC_URL=https://devnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`: the owner's shared Helius key until Aviary has its own; direnv expands it, and nothing prints it.
+- `RPC_URL=https://devnet.helius-rpc.com/?api-key=${HELIUS_API_KEY_PIPELINE}`: Aviary's own Helius key (the shared `HELIUS_API_KEY` ran out of credits on 2026-11-24); direnv expands it, and nothing prints it.
 - `DATABASE_URL=postgres://terminal:terminal@127.0.0.1:5462/terminal`: the Docker Postgres.
+- `NEON_DATABASE_URL`: the hosted deployment's Neon database, its direct connection string, read only by `pnpm terminal:deploy` (`PIPESCOPE-170`).
+
+Run every `wrangler dev` with `MINIFLARE_WORKERD_PATH=/Users/fisd/.local/share/testing-pipeline/bin/workerd-1.20261119.1`, the one workerd the owner's firewall lets reach devnet.
 
 In a worktree without its own `.envrc`, prefix each command with `direnv exec "<main checkout>"`.
 
@@ -869,6 +871,25 @@ pnpm terminal:dev:web                # terminal-web built through OpenNext and r
 - `terminal:dev:web` builds the production bundle first; `pnpm --filter terminal-web dev` is the faster Next.js dev server on the same port.
 - `TEST_DATABASE_URL=postgres://terminal:terminal@127.0.0.1:5462/postgres` lets the unit tests make and drop their own databases: `pnpm --recursive --filter 'terminal-*' test`.
 - `pnpm terminal:lint` runs ESLint over the terminal's packages, whose TypeScript is 6.0 (typescript-eslint and Next.js do not support 7 yet); the rest of the workspace stays on 7.
+
+### Aviary's hosted devnet deployment
+
+Since [#192](https://github.com/imDev2023/testing-pipeline/issues/192) (2026-11-28; `PIPESCOPE-98`), Aviary runs hosted on the owner's Cloudflare account: `terminal-api-devnet` at https://terminal-api-devnet.rc-labs.workers.dev and `terminal-web-devnet` at https://terminal-web-devnet.rc-labs.workers.dev, each the `env.devnet` of its Worker's `wrangler.jsonc`.
+Its database is the Neon project `terminal-devnet` behind the Hyperdrive `terminal-devnet` (query cache off), its caches the KV namespace `terminal-cache-devnet`, and its one secret `RPC_URL`, Aviary's own Helius devnet key.
+
+```sh
+pnpm terminal:deploy                 # both Workers, from a clean checkout of origin/main; --set-rpc-url first puts the .env's RPC_URL as the API's secret
+pnpm --filter terminal-e2e deployed  # every page on the deployment, 1440, 390 and 360 px in both themes, into screenshots/deployed-*/
+curl https://terminal-api-devnet.rc-labs.workers.dev/health
+```
+
+- `pnpm terminal:deploy` (`apps/terminal-api/scripts/deploy.ts`, `PIPESCOPE-171`) refuses a checkout with changes and any commit but `origin/main`'s newest, so what runs is `main` (`--from-branch` deploys a pull request's pushed commit on purpose, to check its criteria before it merges, as #192 did; deploy `main` again once it has merged); checks that the API's secrets are `RPC_URL` and nothing that may be a wallet or LLM key; applies the migrations to `NEON_DATABASE_URL`; deploys the API tagged with the commit (its `/health` reports the tag as `version.tag`), builds the web app with the URL wrangler gave the API, checks it for the test wallet and deploys it; and waits until `/health` answers from that commit with Neon and the RPC reachable.
+- Docker must be running: the API's deploy builds Canary's image (`crates/canary/Dockerfile`) and pushes it to Cloudflare's registry.
+  On 2026-11-28 one deploy stopped with `Unauthorized` when wrangler asked for the registry's credentials, after the Worker's new version was already live; running `pnpm terminal:deploy` again passed, so rerun it before anything else.
+- Wrangler runs on the owner's `wrangler login`, not the shared `CLOUDFLARE_API_TOKEN`, which may not read Hyperdrive; the script leaves the token out of wrangler's environment.
+- `env -u CLOUDFLARE_API_TOKEN pnpm --filter terminal-api exec wrangler secret list --env devnet` lists the API's secrets; `wrangler tail terminal-api-devnet` (the same way) streams its logs.
+- A Cron Trigger made by a Worker's first deploy can take up to 15 minutes to fire; the indexer's first run then backfills the router's whole history into Neon.
+- Never point a local run, the e2e suite or a demo at `NEON_DATABASE_URL`: their global setups seed test records (Canary results, explanations, keeper records) that the hosted pages would show.
 
 ### Aviary's end-to-end tests
 
