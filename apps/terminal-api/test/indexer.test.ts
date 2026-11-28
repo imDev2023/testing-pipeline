@@ -526,6 +526,32 @@ describe("the explainer's keys", () => {
     expect(made).toHaveBeenCalledTimes(3);
   });
 
+  it("are made again after a write that was still in flight while they were made last", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((done) => (release = done));
+    const web = metadataWeb();
+    let started = 0;
+    const slow = { ...web, fetch: async (url: string) => (started++, await held, web.fetch(url)) };
+    const { indexer } = core(slow);
+    await indexer.reconcile();
+    // The strategy's metadata is being fetched, inside its database client, when the keys are made.
+    const fetching = indexer.fetchPendingMetadata();
+    await vi.waitFor(() => expect(started).toBe(1));
+    expect(await indexer.explainerKeys(async () => "made")).toBe("made");
+    release();
+    await fetching;
+    expect(await indexer.explainerKeys(async () => "made again")).toBe("made again");
+  });
+
+  it("are made again on the next run while a strategy's product could not be read", async () => {
+    const { indexer } = core();
+    const again = (made: { unread: string[] }) => made.unread.length > 0;
+    const unread = { unread: ["J4sA9oSJKgJukRid3ZzuYppHtUT8gu1psW57J9xonW9t"] };
+    expect(await indexer.explainerKeys(async () => unread, again)).toEqual(unread);
+    expect(await indexer.explainerKeys(async () => ({ unread: [] }), again)).toEqual({ unread: [] });
+    expect(await indexer.explainerKeys(async () => ({ unread: [] }), again)).toBeNull();
+  });
+
   it("are tried again on the next run when making them failed", async () => {
     const { indexer } = core();
     await expect(indexer.explainerKeys(async () => Promise.reject(new Error("the RPC refused")))).rejects.toThrow("the RPC refused");

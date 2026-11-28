@@ -1,6 +1,8 @@
-// `pnpm terminal:deploy [--set-rpc-url]`: deploys Aviary's two devnet Workers together
+// `pnpm terminal:deploy [--set-rpc-url] [--from-branch]`: deploys Aviary's two devnet Workers together
 // (docs/spec/pipescope-architecture.md, Environments; docs/toolchain.md, "Aviary's hosted devnet
-// deployment"; #192), from a clean checkout so what runs is a commit:
+// deployment"; #192), from a clean checkout of main's newest commit on origin, so what runs is that
+// commit; `--from-branch` deploys a pull request's pushed commit instead, to check its criteria on
+// the deployment before it merges:
 //
 // 1. the secrets of `terminal-api-devnet`: RPC_URL set and nothing that may be a wallet or LLM key
 //    (PIPESCOPE-37); `--set-rpc-url` first puts the project .env's RPC_URL through wrangler's stdin,
@@ -16,7 +18,7 @@
 // not read Hyperdrive.
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
-import { deployedProblem, secretsProblem, workersDevUrl } from "./deployChecks.ts";
+import { commitProblem, deployedProblem, secretsProblem, workersDevUrl } from "./deployChecks.ts";
 import type { Health } from "../src/contract.ts";
 
 const ROOT = resolve(import.meta.dirname, "../../..");
@@ -28,6 +30,7 @@ const WEB_NAME = "terminal-web-devnet";
 const HEALTH_WAIT_MS = 180_000;
 
 const setRpcUrl = process.argv.includes("--set-rpc-url");
+const fromBranch = process.argv.includes("--from-branch");
 
 /** The environment wrangler runs in: the account's login, so the shared API token is left out. */
 const wranglerEnv = (extra: Record<string, string> = {}) => {
@@ -36,20 +39,28 @@ const wranglerEnv = (extra: Record<string, string> = {}) => {
   return env;
 };
 
-/** Runs a command, showing its output as it goes, and gives back what it printed; a failure stops the deploy. */
-function run(command: string, args: string[], options: { cwd: string; env?: Record<string, string | undefined>; input?: string; quiet?: boolean }): Promise<string> {
+/**
+ * Runs a command, showing its output as it goes, and gives back what it printed (only its standard
+ * output with `stdoutOnly`, for output that is parsed); a failure stops the deploy with what it printed
+ * on its standard error.
+ */
+function run(command: string, args: string[], options: { cwd: string; env?: Record<string, string | undefined>; input?: string; quiet?: boolean; stdoutOnly?: boolean }): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd: options.cwd, env: options.env ?? process.env, stdio: ["pipe", "pipe", "pipe"] });
     let output = "";
-    const take = (stream: NodeJS.WriteStream) => (chunk: Buffer) => {
+    let errors = "";
+    child.stdout.on("data", (chunk: Buffer) => {
       output += chunk.toString();
-      if (!options.quiet) stream.write(chunk);
-    };
-    child.stdout.on("data", take(process.stdout));
-    child.stderr.on("data", take(process.stderr));
+      if (!options.quiet) process.stdout.write(chunk);
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      errors += chunk.toString();
+      if (!options.stdoutOnly) output += chunk.toString();
+      if (!options.quiet) process.stderr.write(chunk);
+    });
     child.stdin.end(options.input ?? "");
     child.on("error", reject);
-    child.on("close", (code) => (code === 0 ? resolve(output) : reject(new Error(`${command} ${args[0] ?? ""} ${args[1] ?? ""} exited with ${code}`))));
+    child.on("close", (code) => (code === 0 ? resolve(output) : reject(new Error(`${command} ${args.slice(0, 3).join(" ")} exited with ${code}${options.quiet ? `:\n${errors.trim()}` : ""}`))));
   });
 }
 
@@ -59,21 +70,29 @@ const fail = (line: string): never => {
   process.exit(1);
 };
 
-// A clean checkout, so the deployment is a commit.
-const dirty = (await run("git", ["status", "--porcelain"], { cwd: ROOT, quiet: true })).trim();
-if (dirty) fail(`the checkout has changes; commit them first, so what is deployed is a commit:\n${dirty}`);
-const commit = (await run("git", ["rev-parse", "--short=12", "HEAD"], { cwd: ROOT, quiet: true })).trim();
-const subject = (await run("git", ["log", "-1", "--format=%s"], { cwd: ROOT, quiet: true })).trim().slice(0, 100);
-const neon = process.env.NEON_DATABASE_URL ?? fail("NEON_DATABASE_URL is not set: it is the Neon project's direct connection string, in the project's .env.");
+// A clean checkout of main's newest commit on origin, or with --from-branch a pushed one, so the deployment is a known commit.
+const git = async (...args: string[]) => (await run("git", args, { cwd: ROOT, quiet: true, stdoutOnly: true })).trim();
+await git("fetch", "--quiet", "origin");
+const head = await git("rev-parse", "HEAD");
+const branches = await git("branch", "--remotes", "--contains", head);
+const problem = commitProblem({ dirty: await git("status", "--porcelain"), head, main: await git("rev-parse", "origin/main"), pushed: branches !== "", fromBranch });
+if (problem) fail(problem);
+const commit = head.slice(0, 12);
+const subject = (await git("log", "-1", "--format=%s")).slice(0, 100);
+const neon = process.env.NEON_DATABASE_URL?.trim() || fail("NEON_DATABASE_URL is not set: it is the Neon project's direct connection string, in the project's .env.");
 
 step(`the secrets of ${API_NAME}`);
 if (setRpcUrl) {
-  const rpcUrl = process.env.RPC_URL ?? fail("RPC_URL is not set: it is the Helius devnet URL carrying Aviary's own key, in the project's .env.");
+  const rpcUrl = process.env.RPC_URL?.trim() || fail("RPC_URL is not set: it is the Helius devnet URL carrying Aviary's own key, in the project's .env.");
   await run("pnpm", ["exec", "wrangler", "secret", "put", "RPC_URL", "--env", "devnet"], { cwd: API_DIR, env: wranglerEnv(), input: rpcUrl });
 }
-const listed = JSON.parse(await run("pnpm", ["exec", "wrangler", "secret", "list", "--env", "devnet", "--format", "json"], { cwd: API_DIR, env: wranglerEnv(), quiet: true }).catch(() => "[]")) as { name: string }[];
-const problem = secretsProblem(listed.map((s) => s.name));
-if (problem) fail(problem);
+// A Worker never deployed has no secrets; any other failure stops the deploy with wrangler's own words.
+const secretsOutput = await run("pnpm", ["exec", "wrangler", "secret", "list", "--env", "devnet", "--format", "json"], { cwd: API_DIR, env: wranglerEnv(), quiet: true, stdoutOnly: true }).catch((e: unknown) =>
+  e instanceof Error && /not found|does not exist|10007/i.test(e.message) ? "[]" : fail(`listing ${API_NAME}'s secrets failed: ${e instanceof Error ? e.message : String(e)}`),
+);
+const listed = JSON.parse(secretsOutput.slice(secretsOutput.indexOf("["))) as { name: string }[];
+const secrets = secretsProblem(listed.map((s) => s.name));
+if (secrets) fail(secrets);
 console.log(`secrets: ${listed.map((s) => s.name).join(", ")}`);
 
 step("the migrations, on Neon");

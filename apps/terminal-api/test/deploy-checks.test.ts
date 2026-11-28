@@ -2,7 +2,7 @@
 // Workers (#192): the URL wrangler gives each Worker, the secrets the API holds (PIPESCOPE-37), and
 // that `/health` answers from the version just deployed with the database and the RPC reachable.
 import { describe, expect, it } from "vitest";
-import { deployedProblem, secretsProblem, workersDevUrl } from "../scripts/deployChecks";
+import { commitProblem, deployedProblem, secretsProblem, workersDevUrl } from "../scripts/deployChecks";
 
 describe("the workers.dev URL", () => {
   it("is read from what wrangler printed for the Worker deployed", () => {
@@ -51,5 +51,23 @@ describe("the deployed API's /health", () => {
     expect(deployedProblem({ ...healthy, ok: false, database: { ok: false, latencyMs: null, migrations: null, error: "the database did not answer" } }, "5e6b64fabc12")).toBe(
       "/health is not ok: database: the database did not answer",
     );
+  });
+});
+
+describe("the commit deployed", () => {
+  const clean = { dirty: "", head: "aaa111", main: "aaa111", pushed: true, fromBranch: false };
+
+  it("is main's newest commit, from a clean checkout", () => {
+    expect(commitProblem(clean)).toBeNull();
+  });
+
+  it("is refused while the checkout has changes", () => {
+    expect(commitProblem({ ...clean, dirty: " M apps/terminal-api/src/index.ts" })).toMatch(/^the checkout has changes; commit them first/);
+  });
+
+  it("is refused when it is not main's newest, unless --from-branch names a pushed commit on purpose", () => {
+    expect(commitProblem({ ...clean, head: "bbb222" })).toMatch(/^bbb222 is not origin\/main's newest commit \(aaa111\).*--from-branch/);
+    expect(commitProblem({ ...clean, head: "bbb222", fromBranch: true })).toBeNull();
+    expect(commitProblem({ ...clean, head: "bbb222", fromBranch: true, pushed: false })).toMatch(/^bbb222 is on no branch on origin/);
   });
 });

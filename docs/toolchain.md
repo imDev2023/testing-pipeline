@@ -878,12 +878,12 @@ Since [#192](https://github.com/imDev2023/testing-pipeline/issues/192) (2026-11-
 Its database is the Neon project `terminal-devnet` behind the Hyperdrive `terminal-devnet` (query cache off), its caches the KV namespace `terminal-cache-devnet`, and its one secret `RPC_URL`, Aviary's own Helius devnet key.
 
 ```sh
-pnpm terminal:deploy                 # both Workers, from a clean checkout; --set-rpc-url first puts the .env's RPC_URL as the API's secret
+pnpm terminal:deploy                 # both Workers, from a clean checkout of origin/main; --set-rpc-url first puts the .env's RPC_URL as the API's secret
 pnpm --filter terminal-e2e deployed  # every page on the deployment, 1440, 390 and 360 px in both themes, into screenshots/deployed-*/
 curl https://terminal-api-devnet.rc-labs.workers.dev/health
 ```
 
-- `pnpm terminal:deploy` (`apps/terminal-api/scripts/deploy.ts`, `PIPESCOPE-171`) refuses a checkout with changes, so what runs is a commit; checks that the API's secrets are `RPC_URL` and nothing that may be a wallet or LLM key; applies the migrations to `NEON_DATABASE_URL`; deploys the API tagged with the commit (its `/health` reports the tag as `version.tag`), builds the web app with the URL wrangler gave the API, checks it for the test wallet and deploys it; and waits until `/health` answers from that commit with Neon and the RPC reachable.
+- `pnpm terminal:deploy` (`apps/terminal-api/scripts/deploy.ts`, `PIPESCOPE-171`) refuses a checkout with changes and any commit but `origin/main`'s newest, so what runs is `main` (`--from-branch` deploys a pull request's pushed commit on purpose, to check its criteria before it merges, as #192 did; deploy `main` again once it has merged); checks that the API's secrets are `RPC_URL` and nothing that may be a wallet or LLM key; applies the migrations to `NEON_DATABASE_URL`; deploys the API tagged with the commit (its `/health` reports the tag as `version.tag`), builds the web app with the URL wrangler gave the API, checks it for the test wallet and deploys it; and waits until `/health` answers from that commit with Neon and the RPC reachable.
 - Docker must be running: the API's deploy builds Canary's image (`crates/canary/Dockerfile`) and pushes it to Cloudflare's registry.
 - Wrangler runs on the owner's `wrangler login`, not the shared `CLOUDFLARE_API_TOKEN`, which may not read Hyperdrive; the script leaves the token out of wrangler's environment.
 - `env -u CLOUDFLARE_API_TOKEN pnpm --filter terminal-api exec wrangler secret list --env devnet` lists the API's secrets; `wrangler tail terminal-api-devnet` (the same way) streams its logs.

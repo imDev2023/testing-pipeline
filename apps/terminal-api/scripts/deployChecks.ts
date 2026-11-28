@@ -33,3 +33,15 @@ export function deployedProblem(health: Health, commit: string): string | null {
   }
   return null;
 }
+
+/**
+ * What keeps the checkout's commit from being deployed, or null: a clean checkout, so the deployment
+ * is a commit, and that commit main's newest on origin (PIPESCOPE-96), unless `--from-branch` deploys
+ * a pushed commit of a pull request on purpose, to check its criteria on the deployment before it merges.
+ */
+export function commitProblem({ dirty, head, main, pushed, fromBranch }: { dirty: string; head: string; main: string; pushed: boolean; fromBranch: boolean }): string | null {
+  if (dirty) return `the checkout has changes; commit them first, so what is deployed is a commit:\n${dirty}`;
+  if (head === main) return null;
+  if (!fromBranch) return `${head} is not origin/main's newest commit (${main}): deploy main, or pass --from-branch to deploy a pull request's pushed commit on purpose`;
+  return pushed ? null : `${head} is on no branch on origin: push it first, so the deployed commit can be found`;
+}

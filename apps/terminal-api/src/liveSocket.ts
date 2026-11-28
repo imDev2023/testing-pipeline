@@ -17,6 +17,8 @@ import { SOCKET_CLOSE_AFTER_LAST_VIEWER_MS, SOCKET_HOURS_PER_DAY, SOCKET_REOPEN_
 
 const DAY_MS = 24 * 3_600_000;
 const CAP_MS = SOCKET_HOURS_PER_DAY * 3_600_000;
+/** Why the socket closed when its day's hours were used. */
+const CAPPED = `used its ${SOCKET_HOURS_PER_DAY} hours for the day`;
 
 /** What storage keeps, so a restarted indexer carries on, and so anyone can read when the socket last opened or closed. */
 export type LiveSocketState = {
@@ -195,22 +197,24 @@ export class LiveSocket {
     this.countDown();
     const timeUp = state.closesAt !== null && this.deps.now() >= state.closesAt;
     if (!state.rooms.length && (timeUp || !this.socket)) {
+      // Closed already by the day's cap: the viewers leaving close nothing, so the cap stays the reason it closed.
+      const capped = !this.socket && state.socket.reason === CAPPED;
       this.socket?.close();
       this.socket = null;
       this.stopCounting();
       this.forgetFailures();
       state.closesAt = null;
-      state.socket = { open: false, at: this.deps.now(), reason: timeUp ? `no viewer for ${minutes(SOCKET_CLOSE_AFTER_LAST_VIEWER_MS)}` : "dropped with no viewer" };
+      if (!capped) state.socket = { open: false, at: this.deps.now(), reason: timeUp ? `no viewer for ${minutes(SOCKET_CLOSE_AFTER_LAST_VIEWER_MS)}` : "dropped with no viewer" };
       await this.save();
       await this.deps.clearAlarm();
-      this.deps.log(`live socket closed: ${state.socket.reason}`);
+      if (!capped) this.deps.log(`live socket closed: ${state.socket.reason}`);
       return;
     }
     if (this.socket && this.spent()) {
       this.socket.close();
       this.socket = null;
       this.stopCounting();
-      state.socket = { open: false, at: this.deps.now(), reason: `used its ${SOCKET_HOURS_PER_DAY} hours for the day` };
+      state.socket = { open: false, at: this.deps.now(), reason: CAPPED };
       await this.save();
       await this.schedule();
       this.deps.log(`live socket closed: ${state.socket.reason}`);

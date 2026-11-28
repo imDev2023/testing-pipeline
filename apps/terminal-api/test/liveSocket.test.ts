@@ -325,4 +325,17 @@ describe("the daily cap", () => {
     expect(h.open()).toHaveLength(0);
     expect((await h.live.status()).openTodayMs).toBeGreaterThanOrEqual(CAP);
   });
+
+  it("keeps the cap as the reason it closed when the viewers leave afterwards, with no second close in the log", async () => {
+    await join("market:A");
+    h.open()[0]!.subscribed();
+    await alarmsUntil(h.world.now + CAP + SOCKET_REOPEN_ALARM_MS);
+    const closed = await h.live.status();
+    const lines = h.world.log.length;
+    await leave("market:A");
+    await alarmsUntil(h.world.now + SOCKET_CLOSE_AFTER_LAST_VIEWER_MS);
+    expect(await h.live.status()).toMatchObject({ open: false, rooms: [], reason: closed.reason, changedAt: closed.changedAt });
+    expect(h.world.log.length).toBe(lines);
+    expect(h.world.alarm).toBeNull();
+  });
 });

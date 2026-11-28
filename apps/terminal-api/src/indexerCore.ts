@@ -658,17 +658,20 @@ export class IndexerCore {
   /**
    * Makes the explainer's keys with `make` (EXPLAINER-23), only when Postgres may hold something
    * that changes one: on this instance's first run (a deploy brings a new prompt or model), after any
-   * use of the database since they were last made (a new version, a metadata change), or after
-   * Canary recorded results. Otherwise it answers null without opening Postgres, so a quiet devnet
-   * lets Neon suspend (#192). A failed try is tried again on the next run.
+   * use of the database that ended since they were last made (a new version, a metadata change),
+   * counted as each ends so a write still in flight when they are made is never taken as seen, or
+   * after Canary recorded results. Otherwise it answers null without opening Postgres, so a quiet
+   * devnet lets Neon suspend (#192). A failed try, and one whose outcome `again` says must be tried
+   * again (a strategy whose product could not be read), are tried again on the next run.
    */
-  async explainerKeys<T>(make: (db: Db) => Promise<T>): Promise<T | null> {
-    if (this.explainerSeen === this.uses && !this.canaryWrote) return null;
+  async explainerKeys<T>(make: (db: Db) => Promise<T>, again: (made: T) => boolean = () => false): Promise<T | null> {
+    if (this.explainerSeen === this.ended && !this.canaryWrote) return null;
     this.canaryWrote = false;
-    const seen = this.uses + 1;
+    // Its own use ends before it returns, so the uses ended then are these and its own; any other that ends meanwhile makes the next run due.
+    const seen = this.ended + 1;
     try {
       const made = await this.withDb(make);
-      this.explainerSeen = seen;
+      this.explainerSeen = again(made) ? null : seen;
       return made;
     } catch (e) {
       this.explainerSeen = null;
@@ -681,8 +684,10 @@ export class IndexerCore {
     this.canaryWrote = true;
   }
 
-  /** The database uses counted when the explainer's keys were last made; null before the first. */
+  /** The database uses ended when the explainer's keys were last made; null before the first, or when they are to be made again. */
   private explainerSeen: number | null = null;
+  /** How many of this instance's database uses have ended. */
+  private ended = 0;
   private canaryWrote = false;
 
   /** How many times this instance has opened Postgres: a job that moved it woke the database, so what follows may read it too (Canary's triggers, ./indexer). */
@@ -721,6 +726,7 @@ export class IndexerCore {
     try {
       return await work(client.db);
     } finally {
+      this.ended++;
       if (--client.users === 0) {
         this.liveClient = null;
         await client.close();
@@ -734,6 +740,7 @@ export class IndexerCore {
     try {
       return await work(db);
     } finally {
+      this.ended++;
       await close();
     }
   }

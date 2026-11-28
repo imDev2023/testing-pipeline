@@ -2843,7 +2843,7 @@ Each field is one line, and each value is one sentence of inline Markdown.
 ### PIPESCOPE-171: How Aviary is deployed
 
 - Question: How are Aviary's two devnet Workers deployed?
-- Answer: Together by `pnpm terminal:deploy` (`apps/terminal-api/scripts/deploy.ts`), from a clean checkout so the deployment is a commit, on the account's own `wrangler login`: it refuses unless the API's secrets are `RPC_URL` and nothing that may be a wallet or LLM key, migrates Neon, deploys `terminal-api-devnet` tagged with the commit, builds `terminal-web-devnet` with the URL wrangler gave the API and checks it for the test wallet, deploys it, and waits for `/health` to answer from that commit with Neon and the RPC reachable.
+- Answer: Together by `pnpm terminal:deploy` (`apps/terminal-api/scripts/deploy.ts`), from a clean checkout of `origin/main`'s newest commit (or with `--from-branch` a pull request's pushed commit, to check its criteria before it merges), on the account's own `wrangler login`: it refuses unless the API's secrets are `RPC_URL` and nothing that may be a wallet or LLM key, migrates Neon, deploys `terminal-api-devnet` tagged with the commit, builds `terminal-web-devnet` with the URL wrangler gave the API and checks it for the test wallet, deploys it, and waits for `/health` to answer from that commit with Neon and the RPC reachable.
 - Alternatives: A deploy script per Worker with the API's URL written into the web's build, as Top-pad has, which ties the build to one Cloudflare account's `workers.dev` subdomain.
 - Specified in: [`docs/spec/pipescope-architecture.md`, Environments](spec/pipescope-architecture.md#environments)
 - Changes by: spec only

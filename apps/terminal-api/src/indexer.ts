@@ -305,7 +305,11 @@ export class Indexer extends DurableObject<Bindings> {
   async explainerKeys(version?: string): Promise<void> {
     this.checkVersion(version);
     try {
-      const outcome = await this.indexer().explainerKeys((db) => makeExplainerKeys(db, { rpcUrl: this.env.RPC_URL }));
+      // A strategy whose product's facts could not be read now is tried again on the next run.
+      const outcome = await this.indexer().explainerKeys(
+        (db) => makeExplainerKeys(db, { rpcUrl: this.env.RPC_URL }),
+        (made) => made.unread.length > 0,
+      );
       if (outcome && Object.values(outcome).some((programs) => programs.length)) console.log("explainer keys", outcome);
     } catch (e) {
       this.failed("making the explainer's keys", e);
