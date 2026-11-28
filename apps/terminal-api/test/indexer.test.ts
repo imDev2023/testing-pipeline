@@ -502,3 +502,33 @@ describe("the hourly read of mints", () => {
     expect((await reader.db.select({ flags: mints.flags }).from(mints)).every((m) => !m.flags?.includes("stale"))).toBe(true);
   });
 });
+
+// The explainer's keys (EXPLAINER-23) depend only on what Postgres holds, so they are made only
+// after something was written there (a new version, a metadata change, a deploy's first run) or
+// Canary recorded results: every 5 minutes of a quiet devnet would otherwise keep Neon's free
+// compute from ever suspending (#192).
+describe("the explainer's keys", () => {
+  it("are made on the first run, then only after the database was written or Canary recorded results", async () => {
+    const { indexer, openDb } = core();
+    const made = vi.fn(async () => "made");
+    expect(await indexer.explainerKeys(made)).toBe("made");
+    expect(await indexer.explainerKeys(made)).toBeNull();
+    await indexer.reconcile();
+    openDb.mockClear();
+    expect(await indexer.explainerKeys(made)).toBe("made");
+    expect(openDb).toHaveBeenCalledTimes(1);
+    await indexer.reconcile();
+    openDb.mockClear();
+    expect(await indexer.explainerKeys(made)).toBeNull();
+    expect(openDb).not.toHaveBeenCalled();
+    indexer.canaryRecorded();
+    expect(await indexer.explainerKeys(made)).toBe("made");
+    expect(made).toHaveBeenCalledTimes(3);
+  });
+
+  it("are tried again on the next run when making them failed", async () => {
+    const { indexer } = core();
+    await expect(indexer.explainerKeys(async () => Promise.reject(new Error("the RPC refused")))).rejects.toThrow("the RPC refused");
+    expect(await indexer.explainerKeys(async () => "made")).toBe("made");
+  });
+});

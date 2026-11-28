@@ -7,11 +7,16 @@
 // at once, so nothing between the last cron run and the socket is missed. A try that fails before
 // the RPC confirms the subscription (refused, say) makes the next wait twice as long, up to
 // SOCKET_REOPEN_BACKOFF_MAX_MS; and a socket that drops once no room has a viewer is not reopened
-// for no one (#214).
+// for no one (#214). It is held at most SOCKET_HOURS_PER_DAY hours in a UTC day, whoever watches,
+// then stays closed until the next day, when the alarm opens it again for the viewers still there;
+// meanwhile the pages update from the every-minute reconciliation (PIPESCOPE-169).
 //
 // Kept apart from the `Indexer` Durable Object (./indexer), which gives it its storage, its alarm and
 // the RPC's socket, so it runs and is tested in Node.
-import { SOCKET_CLOSE_AFTER_LAST_VIEWER_MS, SOCKET_REOPEN_ALARM_MS, SOCKET_REOPEN_BACKOFF_MAX_MS } from "./config";
+import { SOCKET_CLOSE_AFTER_LAST_VIEWER_MS, SOCKET_HOURS_PER_DAY, SOCKET_REOPEN_ALARM_MS, SOCKET_REOPEN_BACKOFF_MAX_MS } from "./config";
+
+const DAY_MS = 24 * 3_600_000;
+const CAP_MS = SOCKET_HOURS_PER_DAY * 3_600_000;
 
 /** What storage keeps, so a restarted indexer carries on, and so anyone can read when the socket last opened or closed. */
 export type LiveSocketState = {
@@ -27,6 +32,11 @@ export type LiveSocketState = {
    * no socket open; absent when it may be tried at once (and in what older code stored).
    */
   retry?: { failures: number; at: number };
+  /**
+   * How long the socket has been open in the UTC day `day` (days since the epoch), counted up to
+   * `since` while it is open (PIPESCOPE-169); absent before it first opened (and in older code's state).
+   */
+  usage?: { day: number; ms: number; since: number | null };
 };
 
 export type LiveSocketDeps = {
@@ -54,7 +64,7 @@ export type LiveSocketDeps = {
 };
 
 /** `GET /v1/indexer`'s `live`: the socket and the rooms keeping it open. */
-export type LiveStatus = { open: boolean; rooms: string[]; closesAt: number | null; changedAt: number | null; reason: string | null };
+export type LiveStatus = { open: boolean; rooms: string[]; closesAt: number | null; changedAt: number | null; reason: string | null; openTodayMs: number };
 
 const describe = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const minutes = (ms: number) => `${ms / 60_000} minute${ms === 60_000 ? "" : "s"}`;
@@ -69,8 +79,43 @@ export class LiveSocket {
   constructor(private readonly deps: LiveSocketDeps) {}
 
   private async loaded(): Promise<LiveSocketState> {
-    this.state ??= (await this.deps.load()) ?? { rooms: [], closesAt: null, socket: { open: false, at: 0, reason: "never opened" } };
+    if (!this.state) {
+      this.state = (await this.deps.load()) ?? { rooms: [], closesAt: null, socket: { open: false, at: 0, reason: "never opened" } };
+      // A socket an earlier instance held is gone (a deploy resets the object): its time is counted up to now, erring long.
+      if (this.state.usage?.since != null) this.stopCounting();
+    }
     return this.state;
+  }
+
+  /** Brings the day's count of open time up to now, starting a new count when the UTC day has changed. */
+  private tally(): { day: number; ms: number; since: number | null } {
+    const now = this.deps.now();
+    const day = Math.floor(now / DAY_MS);
+    const usage = (this.state!.usage ??= { day, ms: 0, since: null });
+    if (usage.day !== day) {
+      usage.ms = usage.since === null ? 0 : now - Math.max(usage.since, day * DAY_MS);
+      usage.day = day;
+    } else if (usage.since !== null) usage.ms += now - usage.since;
+    if (usage.since !== null) usage.since = now;
+    return usage;
+  }
+
+  private startCounting() {
+    this.tally().since = this.deps.now();
+  }
+
+  private stopCounting() {
+    this.tally().since = null;
+  }
+
+  /** Whether the socket has been open its SOCKET_HOURS_PER_DAY hours today. */
+  private spent(): boolean {
+    return this.tally().ms >= CAP_MS;
+  }
+
+  /** The start of the next UTC day, when the day's hours are new. */
+  private tomorrow(): number {
+    return (Math.floor(this.deps.now() / DAY_MS) + 1) * DAY_MS;
   }
 
   private async save() {
@@ -84,14 +129,15 @@ export class LiveSocket {
    */
   private schedule(): Promise<void> {
     const retry = this.state!.retry;
-    const next = !this.socket && retry ? retry.at : this.deps.now() + SOCKET_REOPEN_ALARM_MS;
+    let next = !this.socket && retry ? retry.at : this.deps.now() + SOCKET_REOPEN_ALARM_MS;
+    if (!this.socket && this.spent()) next = Math.max(next, this.tomorrow());
     return this.deps.setAlarm(Math.min(next, this.state!.closesAt ?? Infinity));
   }
 
-  /** Whether a closed socket may be opened now: no failed try is waiting out its wait. */
+  /** Whether a closed socket may be opened now: no failed try is waiting out its wait, and the day's hours are not used. */
   private mayTry(): boolean {
     const retry = this.state!.retry;
-    return !retry || this.deps.now() >= retry.at;
+    return (!retry || this.deps.now() >= retry.at) && !this.spent();
   }
 
   /** A try failed before the RPC confirmed the subscription: the next waits twice as long as the last, from the alarm's cadence. */
@@ -121,7 +167,7 @@ export class LiveSocket {
     if (!this.socket && this.mayTry()) {
       await this.open(`a viewer in ${room}`);
       await this.schedule();
-    } else if (closing) await this.schedule();
+    } else if (closing || (!this.socket && this.spent())) await this.schedule();
   }
 
   /** A room's last viewer left: once no room has one, the socket closes after the grace. */
@@ -151,11 +197,22 @@ export class LiveSocket {
     if (!state.rooms.length && (timeUp || !this.socket)) {
       this.socket?.close();
       this.socket = null;
+      this.stopCounting();
       this.forgetFailures();
       state.closesAt = null;
       state.socket = { open: false, at: this.deps.now(), reason: timeUp ? `no viewer for ${minutes(SOCKET_CLOSE_AFTER_LAST_VIEWER_MS)}` : "dropped with no viewer" };
       await this.save();
       await this.deps.clearAlarm();
+      this.deps.log(`live socket closed: ${state.socket.reason}`);
+      return;
+    }
+    if (this.socket && this.spent()) {
+      this.socket.close();
+      this.socket = null;
+      this.stopCounting();
+      state.socket = { open: false, at: this.deps.now(), reason: `used its ${SOCKET_HOURS_PER_DAY} hours for the day` };
+      await this.save();
+      await this.schedule();
       this.deps.log(`live socket closed: ${state.socket.reason}`);
       return;
     }
@@ -176,6 +233,7 @@ export class LiveSocket {
     const ended = (why: string, line: string) => {
       if (this.socket !== socket) return;
       this.socket = null;
+      this.stopCounting();
       state.socket = { open: false, at: this.deps.now(), reason: why };
       if (this.confirmed) this.deps.log(`${line}; the alarm reopens it`);
       else {
@@ -205,6 +263,7 @@ export class LiveSocket {
       return;
     }
     this.socket = socket;
+    this.startCounting();
     this.confirmed = false;
     state.socket = { open: true, at: this.deps.now(), reason };
     await this.save();
@@ -215,6 +274,6 @@ export class LiveSocket {
 
   async status(): Promise<LiveStatus> {
     const state = await this.loaded();
-    return { open: this.socket !== null, rooms: state.rooms, closesAt: state.closesAt, changedAt: state.socket.at || null, reason: state.socket.reason };
+    return { open: this.socket !== null, rooms: state.rooms, closesAt: state.closesAt, changedAt: state.socket.at || null, reason: state.socket.reason, openTodayMs: this.tally().ms };
   }
 }

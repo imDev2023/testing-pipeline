@@ -11,7 +11,6 @@ import { sweepCanary } from "./canaryTriggers";
 import type { JobName } from "./config";
 import type { ApiError } from "./contract";
 import { runDueJobs, type Job } from "./dispatcher";
-import { makeExplainerKeys } from "./explainer";
 import { explanationRoutes } from "./explanation";
 import type { Bindings } from "./env";
 import { feed, notFound } from "./feed";
@@ -118,7 +117,7 @@ export function jobs(env: Bindings): Partial<Record<JobName, Job>> {
     metadataRefetch: async () => void (await indexer(env).refetchMetadata(version)),
     mintRefresh: async () => void (await indexer(env).refreshMints(version)),
     canarySweep: () => canarySweep(env),
-    explainerKeys: () => explainerKeys(env),
+    explainerKeys: async () => void (await indexer(env).explainerKeys(version)),
   };
 }
 
@@ -131,17 +130,6 @@ async function canarySweep(env: Bindings): Promise<void> {
   const { db, close } = createDb(env.HYPERDRIVE.connectionString);
   try {
     await sweepCanary(db, startCanary(env));
-  } finally {
-    await close();
-  }
-}
-
-/** The explainer's keys (./explainer): each strategy's current version's key, recorded pending with its evidence when new. */
-async function explainerKeys(env: Bindings): Promise<void> {
-  const { db, close } = createDb(env.HYPERDRIVE.connectionString);
-  try {
-    const { made, revived, waiting, unread } = await makeExplainerKeys(db, { rpcUrl: env.RPC_URL });
-    if (made.length || revived.length || waiting.length || unread.length) console.log("explainer keys", { made, revived, waiting, unread });
   } finally {
     await close();
   }

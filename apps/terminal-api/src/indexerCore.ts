@@ -655,6 +655,36 @@ export class IndexerCore {
     });
   }
 
+  /**
+   * Makes the explainer's keys with `make` (EXPLAINER-23), only when Postgres may hold something
+   * that changes one: on this instance's first run (a deploy brings a new prompt or model), after any
+   * use of the database since they were last made (a new version, a metadata change), or after
+   * Canary recorded results. Otherwise it answers null without opening Postgres, so a quiet devnet
+   * lets Neon suspend (#192). A failed try is tried again on the next run.
+   */
+  async explainerKeys<T>(make: (db: Db) => Promise<T>): Promise<T | null> {
+    if (this.explainerSeen === this.uses && !this.canaryWrote) return null;
+    this.canaryWrote = false;
+    const seen = this.uses + 1;
+    try {
+      const made = await this.withDb(make);
+      this.explainerSeen = seen;
+      return made;
+    } catch (e) {
+      this.explainerSeen = null;
+      throw e;
+    }
+  }
+
+  /** Canary recorded results, which can change an explainer key: the next `explainerKeys` makes them. */
+  canaryRecorded(): void {
+    this.canaryWrote = true;
+  }
+
+  /** The database uses counted when the explainer's keys were last made; null before the first. */
+  private explainerSeen: number | null = null;
+  private canaryWrote = false;
+
   /** How many times this instance has opened Postgres: a job that moved it woke the database, so what follows may read it too (Canary's triggers, ./indexer). */
   databaseUses(): number {
     return this.uses;

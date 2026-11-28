@@ -17,6 +17,7 @@
         "terminal:db:migrate": "pnpm --filter terminal-db migrate",
         "terminal:lint": "eslint apps/terminal-api apps/terminal-web packages/terminal-db packages/terminal-explainer apps/terminal-explainer-cli packages/terminal-indexer tests/terminal-e2e tests/devnet",
         "terminal:e2e": "pnpm --filter terminal-e2e e2e",
+        "terminal:deploy": "node apps/terminal-api/scripts/deploy.ts",
         "canary:rerun": "node apps/terminal-api/scripts/canary-rerun.ts",
         "explainer:approve": "pnpm --filter terminal-explainer-cli approve",
         "explainer:reports": "pnpm --filter terminal-explainer-cli reports",

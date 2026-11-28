@@ -10,6 +10,7 @@ import { DurableObject } from "cloudflare:workers";
 import { createDb } from "terminal-db";
 import { startCanary } from "./canary";
 import { drainCanaryOutbox } from "./canaryTriggers";
+import { makeExplainerKeys } from "./explainer";
 import { logsSubscribeRequest, parseLogsMessage, RpcError, type IndexResult } from "terminal-indexer";
 import type { Bindings } from "./env";
 import { IndexerCore, ROUTER } from "./indexerCore";
@@ -31,8 +32,8 @@ export type IndexerStatus = {
   watchedAt: string | null;
   /** What last failed, by job and kind of error; its detail stays in the logs, since it can name the database's host. */
   lastError: string | null;
-  /** The live socket: whether it is open, the rooms with a viewer keeping it so, when it closes, and when and why it last opened or closed. */
-  live: { open: boolean; rooms: string[]; closesAt: string | null; changedAt: string | null; reason: string | null };
+  /** The live socket: whether it is open, the rooms with a viewer keeping it so, when it closes, when and why it last opened or closed, and how long it has been open this UTC day (PIPESCOPE-169). */
+  live: { open: boolean; rooms: string[]; closesAt: string | null; changedAt: string | null; reason: string | null; openTodayMs: number };
 };
 
 const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString());
@@ -296,6 +297,27 @@ export class Indexer extends DurableObject<Bindings> {
     await this.fetchImages();
   }
 
+  /**
+   * The explainer's keys (./explainer): each strategy's current version's key, recorded pending with
+   * its evidence when new, made only when Postgres may hold something that changes one
+   * (IndexerCore's `explainerKeys`), so a quiet devnet never wakes the database for them (#192).
+   */
+  async explainerKeys(version?: string): Promise<void> {
+    this.checkVersion(version);
+    try {
+      const outcome = await this.indexer().explainerKeys((db) => makeExplainerKeys(db, { rpcUrl: this.env.RPC_URL }));
+      if (outcome && Object.values(outcome).some((programs) => programs.length)) console.log("explainer keys", outcome);
+    } catch (e) {
+      this.failed("making the explainer's keys", e);
+      throw e;
+    }
+  }
+
+  /** Canary recorded results (./canaryRun), which can change an explainer key: the next `explainerKeys` job makes them. */
+  async canaryRecorded(): Promise<void> {
+    this.indexer().canaryRecorded();
+  }
+
   /** Drops candles past their retention, once a day. */
   async prune(version?: string): Promise<number> {
     this.checkVersion(version);
@@ -318,7 +340,7 @@ export class Indexer extends DurableObject<Bindings> {
       strategiesReconciledAt: this.strategiesReconciledAt,
       watchedAt: this.watchedAt,
       lastError: this.lastError,
-      live: { open: live.open, rooms: live.rooms, closesAt: iso(live.closesAt), changedAt: iso(live.changedAt), reason: live.reason },
+      live: { open: live.open, rooms: live.rooms, closesAt: iso(live.closesAt), changedAt: iso(live.changedAt), reason: live.reason, openTodayMs: live.openTodayMs },
     };
   }
 

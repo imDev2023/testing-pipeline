@@ -33,7 +33,7 @@ export const JOB_INTERVAL_MINUTES = {
   /** Dropping candles past their length's retention (`CANDLES`), once a day, so the database wakes for it rarely (PIPESCOPE-109). */
   pruneCandles: 24 * 60,
   /** Canary's scheduled sweep of every market (CANARY-23; docs/spec/pipescope-canary.md, When Canary runs). */
-  canarySweep: 6 * 60,
+  canarySweep: 12 * 60,
   /**
    * Making each strategy's explainer key (EXPLAINER-23): a new version, a metadata change, changed
    * Canary outcomes or a new prompt or model each make a key within this interval; no model is called.
@@ -65,6 +65,14 @@ export const SOCKET_CLOSE_AFTER_LAST_VIEWER_MS = 3 * MINUTE;
  * Meanwhile the every-minute reconciliation still brings each trade to the pages.
  */
 export const SOCKET_REOPEN_BACKOFF_MAX_MS = 5 * MINUTE;
+
+/**
+ * The most hours the live socket is held open in a UTC day, whoever watches (PIPESCOPE-169): an
+ * open socket keeps the indexer's Durable Object billed, and the account's monthly duration
+ * allowance is shared with the owner's other project. Past them the pages update from the
+ * every-minute reconciliation until the next day.
+ */
+export const SOCKET_HOURS_PER_DAY = 4;
 
 /**
  * How long the indexer waits for what the RPC has not served yet (Top-pad's measured waits): the

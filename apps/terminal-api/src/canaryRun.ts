@@ -7,11 +7,15 @@ import { createDb } from "terminal-db";
 import { startCanary } from "./canary";
 import { CanaryRunCore, type CanaryRunRequest, type CanaryRunStatus, type CanaryRunVersion } from "./canaryRunCore";
 import type { Bindings } from "./env";
+import { indexer } from "./index";
 
 /** The one container, by name, so every version's runs reach the same instance. */
 export const canaryContainer = (env: Bindings) => env.CANARY_CONTAINER.get(env.CANARY_CONTAINER.idFromName("canary"));
 
 export class CanaryRun extends DurableObject<Bindings> {
+  /** Whether this alarm opened Postgres, which it does only to record what it ran. */
+  private wrote = false;
+
   private readonly core = new CanaryRunCore({
     storage: {
       get: (key) => this.ctx.storage.get(key),
@@ -21,7 +25,10 @@ export class CanaryRun extends DurableObject<Bindings> {
     },
     now: () => Date.now(),
     rpcUrl: this.env.RPC_URL,
-    openDb: () => createDb(this.env.HYPERDRIVE.connectionString),
+    openDb: () => {
+      this.wrote = true;
+      return createDb(this.env.HYPERDRIVE.connectionString);
+    },
     container: { run: (body) => canaryContainer(this.env).run(body) },
     forward: (version, request) => startCanary(this.env)(version, request),
     log: (line) => console.log(line),
@@ -36,7 +43,13 @@ export class CanaryRun extends DurableObject<Bindings> {
     return this.core.status();
   }
 
+  /** Each alarm runs what is due; when it recorded anything, the indexer makes the explainer's keys on its next job, since Canary's outcomes are part of them. */
   async alarm(): Promise<void> {
-    await this.core.alarm();
+    this.wrote = false;
+    try {
+      await this.core.alarm();
+    } finally {
+      if (this.wrote) await indexer(this.env).canaryRecorded().catch((e: unknown) => console.error("canary: telling the indexer its results changed failed", e));
+    }
   }
 }
